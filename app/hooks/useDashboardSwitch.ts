@@ -20,7 +20,12 @@ export function useDashboardSwitch({ onSuccess, onError }: UseDashboardSwitchPro
     setError(null)
 
     try {
-      const response = await fetch('/api/auth/verify-password', {
+      // Use fetch with full URL and fallback to relative if window is not defined (SSR safety)
+      const apiUrl = typeof window !== 'undefined'
+        ? `${window.location.origin}/api/auth/verify`
+        : '/api/auth/verify';
+
+      const response = await fetch(apiUrl, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -30,29 +35,30 @@ export function useDashboardSwitch({ onSuccess, onError }: UseDashboardSwitchPro
           password,
           targetDashboard
         })
-      })
+      });
 
-      const result = await response.json()
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        setError(errorData.error || `API error: ${response.status}`);
+        return false;
+      }
+
+      const result = await response.json();
 
       if (result.success) {
-        // Store temporary token
-        localStorage.setItem('tempDashboardToken', result.tempToken)
-        
-        // Update user context
-        setUser(result.user)
-        
-        // Redirect to target dashboard
-        router.push(targetDashboard === 'admin' ? '/admin' : '/chat')
-        
-        return true
+        localStorage.setItem('tempDashboardToken', result.tempToken);
+        setUser(result.user);
+        router.push(targetDashboard === 'admin' ? '/admin' : '/chat');
+        return true;
       } else {
-        throw new Error(result.error || 'Failed to verify password')
+        setError(result.error || 'Failed to verify password');
+        return false;
       }
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Unknown error')
-      return false
+      setError(error instanceof Error ? error.message : 'Unknown error');
+      return false;
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
   }
 

@@ -1,5 +1,13 @@
 import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
+import bcrypt from 'bcryptjs'
+import nodemailer from 'nodemailer'
+import speakeasy from 'speakeasy'
+import qrcode from 'qrcode'
+
+declare module 'nodemailer';
+declare module 'speakeasy';
+declare module 'qrcode';
 
 // GET - Fetch all users
 export async function GET(req: NextRequest) {
@@ -64,11 +72,56 @@ export async function GET(req: NextRequest) {
   }
 }
 
+function generateRandomPassword(length = 12) {
+  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*()_+';
+  let password = '';
+  for (let i = 0; i < length; i++) {
+    password += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return password;
+}
+
+async function sendAccountEmail(email: string, password: string, qrUrl: string) {
+  // Debugger for email sending
+  console.log('---EMAIL DEBUG---')
+  console.log('SMTP host:', 'oxytecsi.com')
+  console.log('SMTP port:', 465)
+  console.log('SMTP user:', 'norbertojr@oxytecsi.com')
+  console.log('SMTP pass:', 'fOBd;&k+ueq*')
+  console.log('From:', 'norbertojr@oxytecsi.com')
+  console.log('To:', email)
+  console.log('Subject:', 'Your DocuMind AI Account')
+  console.log('Password:', password)
+  console.log('QR URL:', qrUrl)
+  // Configure your SMTP transport here
+  const transporter = nodemailer.createTransport({
+    host: 'oxytecsi.com', // Use your domain's SMTP server
+    port: 465, // SSL port
+    secure: true, // Use SSL
+    auth: {
+      user: 'norbertojr@oxytecsi.com',
+      pass: 'fOBd;&k+ueq*'
+    }
+  });
+  await transporter.sendMail({
+    from: 'norbertojr@oxytecsi.com',
+    to: email,
+    subject: 'Your DocuMind AI Account',
+    html: `<p>Your account has been created.</p>
+           <p>Password: <b>${password}</b></p>
+           <p>Scan this QR code with your Authenticator App for 2FA:</p>
+           <img src="${qrUrl}" alt="2FA QR Code" />`
+  });
+}
+
 // POST - Create new user
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { name, email, role, password } = body
+    const { name, email, role } = body
+
+    // Generate random password
+    const password = generateRandomPassword()
 
     // Validate required fields
     if (!name || !email || !role || !password) {
@@ -99,10 +152,19 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // Hash password with bcrypt
+    const hashedPassword = await bcrypt.hash(password, 10)
+
+    // Generate 2FA secret
+    const twoFASecret = speakeasy.generateSecret({ name: `DocuMind AI (${email})` })
+    const qrUrl = twoFASecret.otpauth_url
+      ? await qrcode.toDataURL(twoFASecret.otpauth_url)
+      : ""
+
     const newUser = {
       name,
       email,
-      password, // Store password (in production, hash this with bcrypt)
+      password: hashedPassword, // Store hashed password
       roleId: roleDoc._id,
       role: role,
       status: "active",
@@ -112,7 +174,8 @@ export async function POST(req: NextRequest) {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       // Set default permissions based on role
-      permissions: roleDoc.permissions || ["user_page_access"]
+      permissions: roleDoc.permissions || ["user_page_access"],
+      twoFASecret: twoFASecret.base32 // Store 2FA secret
     }
 
     const result = await db.collection("users").insertOne(newUser)
@@ -123,10 +186,20 @@ export async function POST(req: NextRequest) {
       { $inc: { userCount: 1 } }
     )
 
+    // Try to send email, but don't fail user creation if it fails
+    let emailError = null
+    try {
+      await sendAccountEmail(email, password, qrUrl)
+    } catch (err) {
+      console.error("Error sending account email:", err)
+      emailError = err instanceof Error ? err.message : String(err)
+    }
+
     return NextResponse.json({
       success: true,
       userId: result.insertedId,
-      user: { ...newUser, _id: result.insertedId }
+      user: { ...newUser, _id: result.insertedId },
+      emailError
     })
   } catch (error) {
     console.error("Error creating user:", error)
@@ -135,4 +208,4 @@ export async function POST(req: NextRequest) {
       { status: 500 }
     )
   }
-} 
+}

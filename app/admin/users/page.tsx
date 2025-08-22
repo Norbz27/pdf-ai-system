@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
+import {  User as UserIcon, Eye, EyeOff } from "lucide-react"
 import { 
   Table,
   TableBody,
@@ -22,7 +23,8 @@ import {
   UserX, 
   MoreHorizontal,
   Mail,
-  Calendar
+  Calendar,
+  Copy
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -80,6 +82,43 @@ export default function UsersPage() {
     password: ""
   })
   const { toast } = useToast()
+  const [generatedPassword, setGeneratedPassword] = useState("")
+  const [showPassword, setShowPassword] = useState(false)
+
+  // Password generator function
+  function generatePassword(length = 12) {
+    const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789!@#$%^&*()_+-="
+    let password = ""
+    for (let i = 0; i < length; ++i) {
+      const randomIndex = Math.floor(Math.random() * charset.length)
+      password += charset[randomIndex]
+    }
+    return password
+  }
+
+  // Generate password when dialog opens
+  useEffect(() => {
+    if (isInviteDialogOpen) {
+      const pwd = generatePassword()
+      setGeneratedPassword(pwd)
+      setNewUser((prev) => ({ ...prev, password: pwd }))
+      setShowPassword(true)
+    }
+  }, [isInviteDialogOpen])
+
+  // Regenerate password
+  const handleRegeneratePassword = () => {
+    const pwd = generatePassword()
+    setGeneratedPassword(pwd)
+    setNewUser((prev) => ({ ...prev, password: pwd }))
+    setShowPassword(true)
+  }
+
+  // Copy password to clipboard
+  const handleCopyPassword = () => {
+    navigator.clipboard.writeText(generatedPassword)
+    toast({ title: "Copied", description: "Password copied to clipboard" })
+  }
 
   // Fetch users and roles on component mount
   useEffect(() => {
@@ -376,20 +415,46 @@ export default function UsersPage() {
               </div>
               <div>
                 <Label htmlFor="password">Password</Label>
-                <Input
-                  id="password"
-                  type="password"
-                  value={newUser.password}
-                  onChange={(e) => setNewUser({ ...newUser, password: e.target.value })}
-                  placeholder="Enter password"
-                />
+                <div className="flex gap-2 items-center">
+                  <div className="relative w-full">
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={generatedPassword}
+                      readOnly
+                      style={{ fontFamily: 'monospace' }}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      onClick={() => setShowPassword((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showPassword ? "Hide password" : "Show password"}
+                      style={{ background: 'none', border: 'none', padding: 0 }}
+                    >
+                      {showPassword ? (
+                        <EyeOff className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
+                  <Button type="button" variant="outline" onClick={handleRegeneratePassword}>
+                    Regenerate
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleCopyPassword}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <small className="text-gray-500">Password will be sent to the user via email.</small>
               </div>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setIsInviteDialogOpen(false)}>
                 Cancel
               </Button>
-              <Button onClick={handleInviteUser}>
+              <Button onClick={handleInviteUser} disabled={!newUser.name.trim() || !newUser.email.trim()}>
                 Send Invitation
               </Button>
             </DialogFooter>
@@ -604,4 +669,4 @@ export default function UsersPage() {
       </Dialog>
     </div>
   )
-} 
+}
