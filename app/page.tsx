@@ -17,6 +17,7 @@ import {
 import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import { useUser, User } from "./contexts/UserContext"
+import TwoFAModal from "./components/TwoFAModal"
 
 
 export default function LandingPage() {
@@ -25,6 +26,8 @@ export default function LandingPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [loading, setLoading] = useState(false)
   const [showAccessModal, setShowAccessModal] = useState(false)
+  const [showTwoFAModal, setShowTwoFAModal] = useState(false)
+  const [pendingUser, setPendingUser] = useState<User | null>(null)
   const { toast } = useToast()
   const router = useRouter()
   const { user, setUser, isLoading } = useUser()
@@ -214,48 +217,61 @@ export default function LandingPage() {
 
       // Store token in localStorage
       localStorage.setItem('authToken', data.token)
-      setUser(data.user)
       
-      // Check if user has admin access
-      const hasAdminAccess = data.user.permissions.includes('admin_access') || 
-                           data.user.role === 'Admin' || 
-                           data.user.permissions.includes('manage_users') ||
-                           data.user.permissions.includes('manage_documents')
-      
-      // Check if user has user page access
-      const hasUserAccess = data.user.permissions.includes('user_page_access')
-      
-      if (hasAdminAccess && hasUserAccess) {
-        // Show modal for choice between admin and user
-        setShowAccessModal(true)
+      // Check if user has 2FA configured and needs verification
+      if (data.user.twoFASecret && data.user.status === 'verifying') {
+        // Show 2FA modal for verification
+        setPendingUser(data.user)
+        setShowTwoFAModal(true)
         toast({
-          title: "Success",
-          description: "Login successful! Choose your access level.",
-          variant: "success"
-        })
-      } else if (hasAdminAccess) {
-        // Only admin access, go directly to admin
-        router.replace('/admin')
-        toast({
-          title: "Success",
-          description: "Login successful! Redirecting to admin dashboard.",
-          variant: "success"
-        })
-      } else if (hasUserAccess) {
-        // Only user access, go directly to user page
-        router.replace('/chat')
-        toast({
-          title: "Success",
-          description: "Login successful! Redirecting to user dashboard.",
-          variant: "success"
+          title: "2FA Required",
+          description: "Please enter your 2FA code to complete login.",
+          variant: "info"
         })
       } else {
-        // No access, show error
-        toast({
-          title: "Access Denied",
-          description: "You don't have access to any dashboard. Please contact administrator.",
-          variant: "destructive"
-        })
+        setUser(data.user)
+        
+        // Check if user has admin access
+        const hasAdminAccess = data.user.permissions.includes('admin_access') || 
+                             data.user.role === 'Admin' || 
+                             data.user.permissions.includes('manage_users') ||
+                             data.user.permissions.includes('manage_documents')
+        
+        // Check if user has user page access
+        const hasUserAccess = data.user.permissions.includes('user_page_access')
+        
+        if (hasAdminAccess && hasUserAccess) {
+          // Show modal for choice between admin and user
+          setShowAccessModal(true)
+          toast({
+            title: "Success",
+            description: "Login successful! Choose your access level.",
+            variant: "success"
+          })
+        } else if (hasAdminAccess) {
+          // Only admin access, go directly to admin
+          router.replace('/admin')
+          toast({
+            title: "Success",
+            description: "Login successful! Redirecting to admin dashboard.",
+            variant: "success"
+          })
+        } else if (hasUserAccess) {
+          // Only user access, go directly to user page
+          router.replace('/chat')
+          toast({
+            title: "Success",
+            description: "Login successful! Redirecting to user dashboard.",
+            variant: "success"
+          })
+        } else {
+          // No access, show error
+          toast({
+            title: "Access Denied",
+            description: "You don't have access to any dashboard. Please contact administrator.",
+            variant: "destructive"
+          })
+        }
       }
 
     } catch (error) {
@@ -309,6 +325,64 @@ export default function LandingPage() {
     setUser(null); // log out
     localStorage.clear(); // clear all shared preferences
     router.replace("/"); // go to login page
+  }
+
+  const handleTwoFAVerification = () => {
+    if (!pendingUser) {
+      toast({
+        title: "Error",
+        description: "No user data available for verification.",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    // Set the user as authenticated after successful 2FA verification
+    setUser(pendingUser)
+    setPendingUser(null)
+    setShowTwoFAModal(false)
+    
+    // Check if user has admin access
+    const hasAdminAccess = pendingUser.permissions.includes('admin_access') || 
+                         pendingUser.role === 'Admin' || 
+                         pendingUser.permissions.includes('manage_users') ||
+                         pendingUser.permissions.includes('manage_documents')
+    
+    // Check if user has user page access
+    const hasUserAccess = pendingUser.permissions.includes('user_page_access')
+    
+    if (hasAdminAccess && hasUserAccess) {
+      // Show modal for choice between admin and user
+      setShowAccessModal(true)
+      toast({
+        title: "Success",
+        description: "2FA verification successful! Choose your access level.",
+        variant: "success"
+      })
+    } else if (hasAdminAccess) {
+      // Only admin access, go directly to admin
+      router.replace('/admin')
+      toast({
+        title: "Success",
+        description: "2FA verification successful! Redirecting to admin dashboard.",
+        variant: "success"
+      })
+    } else if (hasUserAccess) {
+      // Only user access, go directly to user page
+      router.replace('/chat')
+      toast({
+        title: "Success",
+        description: "2FA verification successful! Redirecting to user dashboard.",
+        variant: "success"
+      })
+    } else {
+      // No access, show error
+      toast({
+        title: "Access Denied",
+        description: "You don't have access to any dashboard. Please contact administrator.",
+        variant: "destructive"
+      })
+    }
   }
 
   return (
@@ -370,6 +444,8 @@ export default function LandingPage() {
                 {loading ? "Signing In..." : "Sign In"}
               </Button>
           </div>
+          <div className="space-y-2">
+          </div>
                       <div className="text-center">
             <a href="#" className="text-sm text-gray-500 hover:text-gray-700 hover:underline">
               Forgot your password?
@@ -380,6 +456,12 @@ export default function LandingPage() {
         </div>
       </div>
 
+      {/* 2FA Verification Modal */}
+      <TwoFAModal
+        open={showTwoFAModal}
+        onClose={() => setShowTwoFAModal(false)}
+        onVerify={handleTwoFAVerification}
+      />
       
     </div>
   )

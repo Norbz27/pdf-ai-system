@@ -29,8 +29,8 @@ export async function POST(req: NextRequest) {
       )
     }
 
-    // Check if user is active
-    if (user.status !== 'active') {
+    // Check if user is suspended
+    if (user.status === 'suspended') {
       return NextResponse.json(
         { error: "Account is suspended. Please contact administrator." },
         { status: 401 }
@@ -44,6 +44,16 @@ export async function POST(req: NextRequest) {
         { error: "Invalid email or password" },
         { status: 401 }
       )
+    }
+
+    // On first login, only update status to 'active' if no 2FA is required
+    // If 2FA is configured, keep status as 'verifying' until 2FA is completed
+    if (user.status === 'verifying' && !user.twoFASecret) {
+      await db.collection("users").updateOne(
+        { _id: user._id },
+        { $set: { status: 'active', updatedAt: new Date().toISOString() } }
+      );
+      user.status = 'active';
     }
 
     // Get user's role information
@@ -68,7 +78,8 @@ export async function POST(req: NextRequest) {
       role: role?.name || 'User',
       roleId: user.roleId,
       status: user.status,
-      permissions: role?.permissions || []
+      permissions: role?.permissions || [],
+      twoFASecret: user.twoFASecret // Include 2FA secret for frontend verification
     }
 
     const token = jwt.sign(

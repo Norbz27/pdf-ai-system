@@ -24,7 +24,8 @@ import {
   MoreHorizontal,
   Mail,
   Calendar,
-  Copy
+  Copy,
+  QrCode
 } from "lucide-react"
 import {
   DropdownMenu,
@@ -44,6 +45,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
+import axios from "axios"
 
 interface User {
   _id: string
@@ -75,7 +77,8 @@ export default function UsersPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
-  const [newUser, setNewUser] = useState({
+const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+const [newUser, setNewUser] = useState({
     name: "",
     email: "",
     role: "User",
@@ -84,6 +87,8 @@ export default function UsersPage() {
   const { toast } = useToast()
   const [generatedPassword, setGeneratedPassword] = useState("")
   const [showPassword, setShowPassword] = useState(false)
+  const [qrCodeData, setQrCodeData] = useState<{url: string, secret: string, email: string} | null>(null)
+  const [isQrDialogOpen, setIsQrDialogOpen] = useState(false)
 
   // Password generator function
   function generatePassword(length = 12) {
@@ -199,6 +204,16 @@ export default function UsersPage() {
         title: "Success",
         description: "User created successfully",
       })
+
+      // Show QR code if available
+      if (data.qrCodeUrl) {
+        setQrCodeData({
+          url: data.qrCodeUrl,
+          secret: data.twoFASecret,
+          email: newUser.email
+        })
+        setIsQrDialogOpen(true)
+      }
 
       setNewUser({ name: "", email: "", role: "User", password: "" })
       setIsInviteDialogOpen(false)
@@ -327,17 +342,42 @@ export default function UsersPage() {
     }
   }
 
-  const getStatusBadge = (status: string) => {
-    switch (status) {
-      case "active":
-        return <Badge className="bg-green-100 text-green-800">Active</Badge>
-      case "suspended":
-        return <Badge variant="destructive">Suspended</Badge>
-      case "inactive":
-        return <Badge variant="outline">Inactive</Badge>
-      default:
-        return <Badge variant="outline">Unknown</Badge>
+  const handleResetPassword = async (userId: string) => {
+    try {
+      await axios.patch("/api/admin/users", { userId, action: "reset_password" });
+      toast({ title: "Password reset email sent." });
+    } catch (err) {
+      toast({ title: "Failed to reset password", variant: "destructive" });
     }
+  };
+  const handleResendVerification = async (userId: string) => {
+    try {
+      await axios.patch("/api/admin/users", { userId, action: "resend_verification" });
+      toast({ title: "Verification email resent." });
+    } catch (err) {
+      toast({ title: "Failed to resend verification", variant: "destructive" });
+    }
+  };
+
+  const handleViewQrCode = async (userId: string, userEmail: string) => {
+    try {
+      const response = await axios.patch("/api/admin/users", { userId, action: "view_qr_code" });
+      setQrCodeData({
+        url: response.data.qrCodeUrl,
+        secret: response.data.twoFASecret,
+        email: userEmail
+      });
+      setIsQrDialogOpen(true);
+    } catch (err) {
+      toast({ title: "Failed to load QR code", variant: "destructive" });
+    }
+  };
+
+  function getStatusBadge(status: string) {
+    if (status === "active") return <Badge className="bg-green-100 text-green-800">Active</Badge>;
+    if (status === "verifying") return <Badge className="bg-yellow-100 text-yellow-800">Verifying</Badge>;
+    if (status === "suspended") return <Badge className="bg-red-100 text-red-800">Suspended</Badge>;
+    return <Badge variant="outline">{status}</Badge>;
   }
 
   if (loading) {
@@ -563,20 +603,27 @@ export default function UsersPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
+                          <DropdownMenuItem onClick={() => handleViewQrCode(user._id, user.email)}>
+                            <QrCode className="h-4 w-4 mr-2" />
+                            View QR Code
+                          </DropdownMenuItem>
                           <DropdownMenuItem onClick={() => handleEditUser(user)}>
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => handleToggleUserStatus(user._id, user.status)}
-                          >
+                          <DropdownMenuItem onClick={() => handleToggleUserStatus(user._id, user.status)}>
                             <UserX className="h-4 w-4 mr-2" />
                             {user.status === "active" ? "Suspend" : "Activate"}
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            className="text-red-600"
-                            onClick={() => handleDeleteUser(user._id)}
-                          >
+                          <DropdownMenuItem onClick={() => handleResetPassword(user._id)}>
+                            <UserIcon className="h-4 w-4 mr-2" />
+                            Reset Password
+                          </DropdownMenuItem>
+                          <DropdownMenuItem onClick={() => handleResendVerification(user._id)}>
+                            <Mail className="h-4 w-4 mr-2" />
+                            Resend Verification
+                          </DropdownMenuItem>
+                          <DropdownMenuItem className="text-red-600" onClick={() => handleDeleteUser(user._id)}>
                             <UserX className="h-4 w-4 mr-2" />
                             Delete
                           </DropdownMenuItem>
@@ -663,6 +710,61 @@ export default function UsersPage() {
             </Button>
             <Button onClick={handleUpdateUser}>
               Update User
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* QR Code Dialog */}
+      <Dialog open={isQrDialogOpen} onOpenChange={setIsQrDialogOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>2FA Setup QR Code</DialogTitle>
+            <DialogDescription>
+              Scan this QR code with your authenticator app to set up two-factor authentication for {qrCodeData?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4">
+            {qrCodeData?.url && (
+              <div className="flex justify-center">
+                <img 
+                  src={qrCodeData.url} 
+                  alt="2FA QR Code" 
+                  className="w-48 h-48 border rounded-lg"
+                />
+              </div>
+            )}
+            {qrCodeData?.secret && (
+              <div>
+                <Label htmlFor="secret-key">Manual Setup Key</Label>
+                <div className="flex items-center gap-2">
+                  <Input
+                    id="secret-key"
+                    value={qrCodeData.secret}
+                    readOnly
+                    className="font-mono text-sm"
+                  />
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      navigator.clipboard.writeText(qrCodeData.secret)
+                      toast({ title: "Copied", description: "Secret key copied to clipboard" })
+                    }}
+                  >
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-sm text-gray-500 mt-2">
+                  Use this key if you cannot scan the QR code
+                </p>
+              </div>
+            )}
+          </div>
+          <DialogFooter>
+            <Button onClick={() => setIsQrDialogOpen(false)}>
+              Done
             </Button>
           </DialogFooter>
         </DialogContent>
