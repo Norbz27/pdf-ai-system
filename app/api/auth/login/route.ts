@@ -79,7 +79,8 @@ export async function POST(req: NextRequest) {
       roleId: user.roleId,
       status: user.status,
       permissions: role?.permissions || [],
-      twoFASecret: user.twoFASecret // Include 2FA secret for frontend verification
+      twoFASecret: user.twoFASecret, // Include 2FA secret for frontend verification
+      passwordResetRequired: user.passwordResetRequired || false // Include password reset flag
     }
 
     const token = jwt.sign(

@@ -258,7 +258,8 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date().toISOString(),
       // Set default permissions based on role
       permissions: roleDoc.permissions || ["user_page_access"],
-      twoFASecret: twoFASecret.base32 // Store 2FA secret
+      twoFASecret: twoFASecret.base32, // Store 2FA secret
+      passwordResetRequired: true // Require password reset on first login
     }
 
     const result = await db.collection("users").insertOne(newUser)

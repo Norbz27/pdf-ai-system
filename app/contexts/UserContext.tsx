@@ -11,6 +11,7 @@ export interface User {
   permissions: string[]
   status: string
   avatar?: string
+  passwordResetRequired?: boolean
 }
 
 interface UserContextType {
@@ -36,7 +37,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
       // Set lastDashboard if provided (dashboard switch), or infer from user permissions
       if (dashboard) {
         localStorage.setItem('lastDashboard', dashboard)
-      } else if (user.permissions?.includes('admin_access') || user.role === 'Admin') {
+      } else if (user.permissions?.includes('admin_access') || user.role === 'Admin' || user.permissions?.includes('manage_users') || user.permissions?.includes('manage_documents')) {
         localStorage.setItem('lastDashboard', 'admin')
       } else if (user.permissions?.includes('user_page_access')) {
         localStorage.setItem('lastDashboard', 'user')
@@ -134,7 +135,10 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const token = localStorage.getItem('authToken')
     const lastDashboard = localStorage.getItem('lastDashboard')
     const currentPath = window.location.pathname
-    const hasAdminAccess = user?.permissions?.includes('admin_access') || user?.role === 'Admin'
+    const hasAdminAccess = user?.permissions?.includes('admin_access') ||
+                         user?.role === 'Admin' ||
+                         user?.permissions?.includes('manage_users') ||
+                         user?.permissions?.includes('manage_documents')
     const hasUserAccess = user?.permissions?.includes('user_page_access')
     // Only redirect if user is active, not just logged out, and not on logout
     if (

@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast"
 import { useRouter } from "next/navigation"
 import { useUser, User } from "./contexts/UserContext"
 import TwoFAModal from "./components/TwoFAModal"
+import ChangePasswordModal from "./components/ChangePasswordModal"
 
 
 export default function LandingPage() {
@@ -27,10 +28,18 @@ export default function LandingPage() {
   const [loading, setLoading] = useState(false)
   const [showAccessModal, setShowAccessModal] = useState(false)
   const [showTwoFAModal, setShowTwoFAModal] = useState(false)
+  const [showChangePasswordModal, setShowChangePasswordModal] = useState(false)
   const [pendingUser, setPendingUser] = useState<User | null>(null)
+  const [blockRedirect, setBlockRedirect] = useState(false)
+  const [modalDismissed, setModalDismissed] = useState(false)
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
   const { toast } = useToast()
   const router = useRouter()
-  const { user, setUser, isLoading } = useUser()
+  const { user, setUser, isLoading } = useUser() as {
+    user: User | null;
+    setUser: (user: User | null, dashboard?: 'admin' | 'user') => void;
+    isLoading: boolean;
+  }
 
   const handleAccessSelection = (accessType: 'admin' | 'user') => {
     if (!user) return
@@ -70,17 +79,177 @@ export default function LandingPage() {
     setShowAccessModal(false)
   }
 
+  function handleAccessModalClose() {
+    setUser(null); // log out
+    localStorage.clear(); // clear all shared preferences
+    router.replace("/"); // go to login page
+  }
+
+  // Handle first-time login (password reset required)
+  const handleFirstTimeLogin = (userData: User) => {
+    // Don't set user in context yet - this prevents useEffect from running
+    setShowChangePasswordModal(true)
+    setIsChangingPassword(true)
+    setBlockRedirect(true)
+    // Store user data temporarily without setting it in context
+    setPendingUser(userData)
+    toast({
+      title: "Password Reset Required",
+      description: "Please change your password to continue.",
+      variant: "info"
+    })
+    console.log("Password reset required - showing ChangePasswordModal")
+  }
+
+  // Handle normal login redirect logic
+  const handleNormalLoginRedirect = (userData: User) => {
+    setUser(userData)
+    
+    // Check if user has admin access
+    const hasAdminAccess = userData.permissions.includes('admin_access') || 
+                         userData.role === 'Admin' || 
+                         userData.permissions.includes('manage_users') ||
+                         userData.permissions.includes('manage_documents')
+    
+    // Check if user has user page access
+    const hasUserAccess = userData.permissions.includes('user_page_access')
+    
+    if (hasAdminAccess && hasUserAccess) {
+      // Show modal for choice between admin and user
+      setShowAccessModal(true)
+      toast({
+        title: "Success",
+        description: "Login successful! Choose your access level.",
+        variant: "success"
+      })
+    } else if (hasAdminAccess) {
+      // Only admin access, go directly to admin
+      router.replace('/admin')
+      toast({
+        title: "Success",
+        description: "Login successful! Redirecting to admin dashboard.",
+        variant: "success"
+      })
+    } else if (hasUserAccess) {
+      // Only user access, go directly to user page
+      router.replace('/chat')
+      toast({
+        title: "Success",
+        description: "Login successful! Redirecting to user dashboard.",
+        variant: "success"
+      })
+    } else {
+      // No access, show error
+      toast({
+        title: "Access Denied",
+        description: "You don't have access to any dashboard. Please contact administrator.",
+        variant: "destructive"
+      })
+    }
+  }
+
+  const handleTwoFAVerification = () => {
+    if (!pendingUser) {
+      toast({
+        title: "Error",
+        description: "No user data available for verification.",
+        variant: "destructive"
+      })
+      return
+    }
+    
+    setPendingUser(null)
+    setShowTwoFAModal(false)
+
+    // If password reset is required, handle as first-time login
+    if (pendingUser.passwordResetRequired) {
+      handleFirstTimeLogin(pendingUser)
+      return
+    }
+    
+    // Handle as normal login
+    handleNormalLoginRedirect(pendingUser)
+    toast({
+      title: "Success",
+      description: "2FA verification successful!",
+      variant: "success"
+    })
+  }
+
+  const handlePasswordChanged = () => {
+    if (!pendingUser) {
+      toast({
+        title: "Error",
+        description: "User session not found. Please log in again.",
+        variant: "destructive"
+      })
+      router.replace('/')
+      return
+    }
+
+    // Show success message
+    toast({
+      title: "Success",
+      description: "Password changed successfully!",
+      variant: "success"
+    })
+
+    // Update user data to clear passwordResetRequired
+    const updatedUser = { ...pendingUser, passwordResetRequired: false }
+
+    // Update user context with updated user to clear passwordResetRequired globally
+    setUser(updatedUser)
+
+    // Close the modal and mark password changing as complete
+    setShowChangePasswordModal(false)
+    setIsChangingPassword(false)
+    setBlockRedirect(false)
+    setPendingUser(null)
+    
+    // Now set the user in context and handle redirect
+    handleNormalLoginRedirect(updatedUser)
+  }
+
+  const handlePasswordModalClose = () => {
+    setShowChangePasswordModal(false)
+    setIsChangingPassword(false)
+    setBlockRedirect(false)
+
+    // If user cancelled password change, check if they had passwordResetRequired
+    if (pendingUser && pendingUser.passwordResetRequired) {
+     
+      setPendingUser(null)
+      localStorage.clear()
+      router.replace('/')
+    }
+  }
+
   // Handle redirects in useEffect instead of render
   useEffect(() => {
+    // Don't run any redirect logic if user is changing password
+    if (isChangingPassword || showChangePasswordModal) {
+      return
+    }
+
     if (user && !isLoading) {
+      // Prevent redirect if password reset modal is active or redirect is blocked
+      if ((user as User).passwordResetRequired || blockRedirect) {
+        return
+      }
+
+      // Don't redirect if the access modal is currently shown or dismissed
+      if (showAccessModal || modalDismissed) {
+        return
+      }
+
       // Check permissions
-      const hasAdminAccess = (user as User).permissions.includes('admin_access') || 
-                           (user as User).role === 'Admin' || 
+      const hasAdminAccess = (user as User).permissions.includes('admin_access') ||
+                           (user as User).role === 'Admin' ||
                            (user as User).permissions.includes('manage_users') ||
                            (user as User).permissions.includes('manage_documents')
-      
+
       const hasUserAccess = (user as User).permissions.includes('user_page_access')
-      
+
       // Only auto-redirect if user has access to only one dashboard
       if (hasAdminAccess && !hasUserAccess) {
         router.replace('/admin')
@@ -88,13 +257,16 @@ export default function LandingPage() {
         router.replace('/chat')
       } else if (hasAdminAccess && hasUserAccess) {
         // If user has both permissions, show the modal to let them choose
-        setShowAccessModal(true)
+        // Only set modal if it is not already shown and not dismissed
+        if (!showAccessModal && !modalDismissed) {
+          setShowAccessModal(true)
+        }
       } else if ((user as User).role === 'Admin') {
         // Fallback for Admin role users who might not have specific permissions
         router.replace('/admin')
       }
     }
-  }, [user, isLoading, router])
+  }, [user, isLoading, router, blockRedirect, showAccessModal, modalDismissed, showChangePasswordModal, isChangingPassword])
 
   // Show loading while checking authentication
   if (isLoading) {
@@ -111,19 +283,20 @@ export default function LandingPage() {
   // Don't show login form if already authenticated, but still render the modal
   if (user) {
     // Check permissions for the modal
-    const hasAdminAccess = (user as User).permissions.includes('admin_access') || 
-                         (user as User).role === 'Admin' || 
+    const hasAdminAccess = (user as User).permissions.includes('admin_access') ||
+                         (user as User).role === 'Admin' ||
                          (user as User).permissions.includes('manage_users') ||
                          (user as User).permissions.includes('manage_documents')
-    
+
     const hasUserAccess = (user as User).permissions.includes('user_page_access')
-    
+
     return (
       <>
         {/* Access Selection Modal */}
         <Dialog open={showAccessModal} onOpenChange={(open) => {
           setShowAccessModal(open);
           if (!open) {
+            setModalDismissed(true)
             handleAccessModalClose();
           }
         }}>
@@ -136,7 +309,7 @@ export default function LandingPage() {
             </DialogHeader>
             <div className="space-y-3 py-4">
               {hasUserAccess && (
-                <Button 
+                <Button
                   onClick={() => handleAccessSelection('user')}
                   className="w-full h-20 flex items-center justify-start space-x-4 p-4 hover:bg-blue-50 border-2 border-gray-200 hover:border-blue-300 transition-all duration-200"
                   variant="outline"
@@ -150,9 +323,9 @@ export default function LandingPage() {
                   </div>
                 </Button>
               )}
-              
+
               {hasAdminAccess && (
-                <Button 
+                <Button
                   onClick={() => handleAccessSelection('admin')}
                   className="w-full h-20 flex items-center justify-start space-x-4 p-4 hover:bg-purple-50 border-2 border-gray-200 hover:border-purple-300 transition-all duration-200"
                   variant="outline"
@@ -168,8 +341,8 @@ export default function LandingPage() {
               )}
             </div>
             <div className="flex justify-center pt-2">
-              <Button 
-                variant="ghost" 
+              <Button
+                variant="ghost"
                 onClick={() => {
                   setShowAccessModal(false);
                   handleAccessModalClose();
@@ -181,6 +354,22 @@ export default function LandingPage() {
             </div>
           </DialogContent>
         </Dialog>
+
+        {/* 2FA Verification Modal */}
+        <TwoFAModal
+          open={showTwoFAModal}
+          onClose={() => setShowTwoFAModal(false)}
+          onVerify={handleTwoFAVerification}
+        />
+
+        {/* Change Password Modal */}
+        <ChangePasswordModal
+          isOpen={showChangePasswordModal}
+          onClose={handlePasswordModalClose}
+          onPasswordChanged={handlePasswordChanged}
+          userId={pendingUser?._id || (user as User | null)?._id || ''}
+          email={pendingUser?.email || (user as User | null)?.email || ''}
+        />
       </>
     )
   }
@@ -229,49 +418,14 @@ export default function LandingPage() {
           variant: "info"
         })
       } else {
-        setUser(data.user)
-        
-        // Check if user has admin access
-        const hasAdminAccess = data.user.permissions.includes('admin_access') || 
-                             data.user.role === 'Admin' || 
-                             data.user.permissions.includes('manage_users') ||
-                             data.user.permissions.includes('manage_documents')
-        
-        // Check if user has user page access
-        const hasUserAccess = data.user.permissions.includes('user_page_access')
-        
-        if (hasAdminAccess && hasUserAccess) {
-          // Show modal for choice between admin and user
-          setShowAccessModal(true)
-          toast({
-            title: "Success",
-            description: "Login successful! Choose your access level.",
-            variant: "success"
-          })
-        } else if (hasAdminAccess) {
-          // Only admin access, go directly to admin
-          router.replace('/admin')
-          toast({
-            title: "Success",
-            description: "Login successful! Redirecting to admin dashboard.",
-            variant: "success"
-          })
-        } else if (hasUserAccess) {
-          // Only user access, go directly to user page
-          router.replace('/chat')
-          toast({
-            title: "Success",
-            description: "Login successful! Redirecting to user dashboard.",
-            variant: "success"
-          })
-        } else {
-          // No access, show error
-          toast({
-            title: "Access Denied",
-            description: "You don't have access to any dashboard. Please contact administrator.",
-            variant: "destructive"
-          })
+        // If password reset is required, handle as first-time login
+        if (data.user.passwordResetRequired) {
+          handleFirstTimeLogin(data.user)
+          return
         }
+
+        // Handle as normal login
+        handleNormalLoginRedirect(data.user)
       }
 
     } catch (error) {
@@ -319,70 +473,6 @@ export default function LandingPage() {
 
   const togglePasswordVisibility = () => {
     setShowPassword(!showPassword)
-  }
-
-  function handleAccessModalClose() {
-    setUser(null); // log out
-    localStorage.clear(); // clear all shared preferences
-    router.replace("/"); // go to login page
-  }
-
-  const handleTwoFAVerification = () => {
-    if (!pendingUser) {
-      toast({
-        title: "Error",
-        description: "No user data available for verification.",
-        variant: "destructive"
-      })
-      return
-    }
-    
-    // Set the user as authenticated after successful 2FA verification
-    setUser(pendingUser)
-    setPendingUser(null)
-    setShowTwoFAModal(false)
-    
-    // Check if user has admin access
-    const hasAdminAccess = pendingUser.permissions.includes('admin_access') || 
-                         pendingUser.role === 'Admin' || 
-                         pendingUser.permissions.includes('manage_users') ||
-                         pendingUser.permissions.includes('manage_documents')
-    
-    // Check if user has user page access
-    const hasUserAccess = pendingUser.permissions.includes('user_page_access')
-    
-    if (hasAdminAccess && hasUserAccess) {
-      // Show modal for choice between admin and user
-      setShowAccessModal(true)
-      toast({
-        title: "Success",
-        description: "2FA verification successful! Choose your access level.",
-        variant: "success"
-      })
-    } else if (hasAdminAccess) {
-      // Only admin access, go directly to admin
-      router.replace('/admin')
-      toast({
-        title: "Success",
-        description: "2FA verification successful! Redirecting to admin dashboard.",
-        variant: "success"
-      })
-    } else if (hasUserAccess) {
-      // Only user access, go directly to user page
-      router.replace('/chat')
-      toast({
-        title: "Success",
-        description: "2FA verification successful! Redirecting to user dashboard.",
-        variant: "success"
-      })
-    } else {
-      // No access, show error
-      toast({
-        title: "Access Denied",
-        description: "You don't have access to any dashboard. Please contact administrator.",
-        variant: "destructive"
-      })
-    }
   }
 
   return (
@@ -462,7 +552,17 @@ export default function LandingPage() {
         onClose={() => setShowTwoFAModal(false)}
         onVerify={handleTwoFAVerification}
       />
-      
+
+      {/* Change Password Modal */}
+        {(user || pendingUser) && (
+        <ChangePasswordModal
+          isOpen={showChangePasswordModal}
+          onClose={handlePasswordModalClose}
+          onPasswordChanged={handlePasswordChanged}
+          userId={pendingUser?._id || (user as User | null)?._id || ''}
+          email={pendingUser?.email || (user as User | null)?.email || ''}
+        />
+      )}
     </div>
   )
 }
