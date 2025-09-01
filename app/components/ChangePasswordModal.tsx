@@ -22,6 +22,7 @@ interface ChangePasswordModalProps {
   onPasswordChanged: () => void
   userId: string
   email: string
+  requireCurrentPassword?: boolean
 }
 
 export default function ChangePasswordModal({
@@ -30,9 +31,12 @@ export default function ChangePasswordModal({
   onPasswordChanged,
   userId,
   email,
+  requireCurrentPassword = false,
 }: ChangePasswordModalProps) {
+  const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
   const [error, setError] = useState("")
@@ -43,7 +47,11 @@ export default function ChangePasswordModal({
     e.preventDefault()
     setError("")
 
-    // Validate passwords
+    if (requireCurrentPassword && !currentPassword) {
+      setError("Please enter your current password")
+      return
+    }
+
     if (!newPassword || !confirmPassword) {
       setError("Please fill in all password fields")
       return
@@ -69,6 +77,7 @@ export default function ChangePasswordModal({
         },
         body: JSON.stringify({
           userId,
+          currentPassword: requireCurrentPassword ? currentPassword : undefined,
           newPassword,
         }),
       })
@@ -79,13 +88,16 @@ export default function ChangePasswordModal({
         throw new Error(data.error || 'Failed to change password')
       }
 
-      // Removed success toast here to avoid duplicate toasts
-
       // Clear form and close modal
+      setCurrentPassword("")
       setNewPassword("")
       setConfirmPassword("")
       onPasswordChanged()
       onClose()
+      toast({
+        title: "Password changed",
+        description: "Your password has been changed successfully.",
+      })
     } catch (error) {
       console.error('Error changing password:', error)
       setError(error instanceof Error ? error.message : "An error occurred while changing password")
@@ -95,6 +107,7 @@ export default function ChangePasswordModal({
   }
 
   const handleClose = () => {
+    setCurrentPassword("")
     setNewPassword("")
     setConfirmPassword("")
     setError("")
@@ -113,6 +126,34 @@ export default function ChangePasswordModal({
         
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
+            {requireCurrentPassword && (
+              <div className="space-y-2">
+                <Label htmlFor="currentPassword">Current Password</Label>
+                <div className="relative">
+                  <Input
+                    id="currentPassword"
+                    type={showCurrentPassword ? "text" : "password"}
+                    value={currentPassword}
+                    onChange={(e) => setCurrentPassword(e.target.value)}
+                    placeholder="Enter current password"
+                    disabled={isLoading}
+                    className="pr-10"
+                  />
+                  <button
+                    type="button"
+                    className="absolute inset-y-0 right-0 flex items-center pr-3"
+                    onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                    disabled={isLoading}
+                  >
+                    {showCurrentPassword ? (
+                      <EyeOff className="h-4 w-4 text-gray-500" />
+                    ) : (
+                      <Eye className="h-4 w-4 text-gray-500" />
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="space-y-2">
               <Label htmlFor="newPassword">New Password</Label>
@@ -186,7 +227,7 @@ export default function ChangePasswordModal({
             </Button>
             <Button
               type="submit"
-              disabled={!newPassword || !confirmPassword || isLoading}
+              disabled={requireCurrentPassword ? !currentPassword || !newPassword || !confirmPassword : !newPassword || !confirmPassword || isLoading}
             >
               {isLoading ? (
                 <>

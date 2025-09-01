@@ -2,11 +2,12 @@ import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
 import bcrypt from 'bcryptjs'
 import { ObjectId } from "mongodb"
+import jwt from 'jsonwebtoken'
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
-    const { userId, newPassword } = body
+    const { userId, newPassword, currentPassword } = body
 
     if (!userId || !newPassword) {
       return NextResponse.json(
@@ -35,18 +36,29 @@ export async function POST(req: NextRequest) {
       )
     }
 
+    // If current password is provided, verify it
+    if (currentPassword) {
+      const isCurrentPasswordValid = await bcrypt.compare(currentPassword, user.password)
+      if (!isCurrentPasswordValid) {
+        return NextResponse.json(
+          { error: "Current password is incorrect" },
+          { status: 400 }
+        )
+      }
+    }
+
     // Hash new password
     const hashedNewPassword = await bcrypt.hash(newPassword, 10)
 
     // Update user password and clear passwordResetRequired flag
     await db.collection("users").updateOne(
       { _id: user._id },
-      { 
-        $set: { 
+      {
+        $set: {
           password: hashedNewPassword,
           passwordResetRequired: false,
           updatedAt: new Date().toISOString()
-        } 
+        }
       }
     )
 

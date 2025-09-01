@@ -14,6 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import PasswordModal from "@/app/components/PasswordModal"
+import ProfileModal from "@/app/components/ProfileModal"
+import SettingsModal from "@/app/components/SettingsModal"
 import { useDashboardSwitch } from "@/app/hooks/useDashboardSwitch"
 
 interface UserLayoutProps {
@@ -31,6 +33,8 @@ export default function UserLayout({ children }: UserLayoutProps) {
   const router = useRouter()
   const { user, logout, isLoading } = useUser()
   const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
   const { switchDashboard, isLoading: isSwitching } = useDashboardSwitch()
 
   // Function to get user initials
@@ -51,7 +55,13 @@ export default function UserLayout({ children }: UserLayoutProps) {
     return await switchDashboard(password, 'admin')
   }
 
+  const handleOpenProfile = () => {
+    setShowProfileModal(true)
+  }
 
+  const handleOpenSettings = () => {
+    setShowSettingsModal(true)
+  }
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -91,11 +101,11 @@ export default function UserLayout({ children }: UserLayoutProps) {
                   </div>
                 </DropdownMenuTrigger>
                 <DropdownMenuContent align="end">
-                  <DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleOpenProfile}>
                     <User className="mr-2 h-4 w-4" />
                     Edit Profile
                   </DropdownMenuItem>
-                  <DropdownMenuItem>
+                  <DropdownMenuItem onClick={handleOpenSettings}>
                     <Settings className="mr-2 h-4 w-4" />
                     Settings
                   </DropdownMenuItem>
@@ -121,13 +131,21 @@ export default function UserLayout({ children }: UserLayoutProps) {
         {children}
       </main>
 
-      {/* Password Modal */}
+      {/* Modals */}
       <PasswordModal
         isOpen={showPasswordModal}
         onClose={() => setShowPasswordModal(false)}
         onVerify={handlePasswordVerify}
         dashboardType="admin"
         isLoading={isSwitching}
+      />
+      <ProfileModal
+        isOpen={showProfileModal}
+        onClose={() => setShowProfileModal(false)}
+      />
+      <SettingsModal
+        isOpen={showSettingsModal}
+        onClose={() => setShowSettingsModal(false)}
       />
     </div>
   )

@@ -3,11 +3,11 @@
 import { useState } from "react"
 import Link from "next/link"
 import { usePathname, useRouter } from "next/navigation"
-import { 
-  LayoutDashboard, 
-  FileText, 
-  FolderOpen, 
-  Users, 
+import {
+  LayoutDashboard,
+  FileText,
+  FolderOpen,
+  Users,
   Shield,
   Menu,
   X,
@@ -32,6 +32,8 @@ import {
 import AuthGuard from "@/app/components/AuthGuard"
 import { useUser } from "@/app/contexts/UserContext"
 import PasswordModal from "@/app/components/PasswordModal"
+import ProfileModal from "@/app/components/ProfileModal"
+import SettingsModal from "@/app/components/SettingsModal"
 import { useDashboardSwitch } from "@/app/hooks/useDashboardSwitch"
 
 const navigation = [
@@ -53,6 +55,8 @@ export default function AdminLayout({
   const router = useRouter()
   const { user, logout, isLoading } = useUser()
   const [showPasswordModal, setShowPasswordModal] = useState(false)
+  const [showProfileModal, setShowProfileModal] = useState(false)
+  const [showSettingsModal, setShowSettingsModal] = useState(false)
   const { switchDashboard, isLoading: isSwitching } = useDashboardSwitch()
 
   const getUserInitials = (name: string) => {
@@ -72,12 +76,20 @@ export default function AdminLayout({
     return await switchDashboard(password, 'user')
   }
 
+  const handleOpenProfile = () => {
+    setShowProfileModal(true)
+  }
+
+  const handleOpenSettings = () => {
+    setShowSettingsModal(true)
+  }
+
   return (
     <AuthGuard requiredPermissions={['admin_access']} fallbackPath="/">
       <div className="flex h-screen w-full bg-gray-50">
       {/* Mobile sidebar overlay */}
       {sidebarOpen && (
-        <div 
+        <div
           className="fixed inset-0 z-40 bg-gray-600 bg-opacity-75 lg:hidden"
           onClick={() => setSidebarOpen(false)}
         />
@@ -173,11 +185,11 @@ export default function AdminLayout({
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    <DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleOpenProfile}>
                       <User className="mr-2 h-4 w-4" />
                       Edit Profile
                     </DropdownMenuItem>
-                    <DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleOpenSettings}>
                       <Settings className="mr-2 h-4 w-4" />
                       Settings
                     </DropdownMenuItem>
@@ -203,13 +215,21 @@ export default function AdminLayout({
           {children}
         </main>
 
-        {/* Password Modal */}
+        {/* Modals */}
         <PasswordModal
           isOpen={showPasswordModal}
           onClose={() => setShowPasswordModal(false)}
           onVerify={handlePasswordVerify}
           dashboardType="user"
           isLoading={isSwitching}
+        />
+        <ProfileModal
+          isOpen={showProfileModal}
+          onClose={() => setShowProfileModal(false)}
+        />
+        <SettingsModal
+          isOpen={showSettingsModal}
+          onClose={() => setShowSettingsModal(false)}
         />
       </div>
     </div>
