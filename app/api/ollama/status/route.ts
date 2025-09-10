@@ -1,6 +1,6 @@
 export async function GET() {
   try {
-    const response = await fetch("http://localhost:11434/api/tags", {
+    const response = await fetch(process.env.OLLAMA_URL + "/api/tags", {
       method: "GET",
     });
 

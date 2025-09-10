@@ -103,8 +103,8 @@ export default function AdminLayout({
           {/* Sidebar header */}
           <div className="flex items-center justify-between h-20 px-6 border-b bg-white">
             <div className="flex items-center space-x-2">
-              <FileText className="h-8 w-8" />
-              <span className="text-xl font-bold text-gray-900">DocuMind AI</span>
+              <img src="/logo/OXY_gray.png" alt="OXY Logo" className="h-9 w-9" />
+              <span className="text-xl font-bold text-gray-900">Oxy</span>
             </div>
             <Button
               variant="ghost"

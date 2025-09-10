@@ -115,7 +115,7 @@ async function getRelevantChunks(chunks: Chunk[], question: string): Promise<Chu
 // Helper: get session greeting for user
 async function getSessionGreeting(user: any) {
   const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-  const ollamaModel = process.env.OLLAMA_MODEL || "llama3.1";
+  const ollamaModel = process.env.OLLAMA_MODEL || "llama3.2:3b";
   const name = user?.name || "User";
   const email = user?.email || "Unknown";
   const role = user?.role || "Unknown";
@@ -186,12 +186,12 @@ export async function POST(req: Request) {
     if (greetings.some(greet => normalizedQuestion === greet)) {
       // Use Ollama to generate a dynamic greeting response with the same model as document Q&A
       const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-      const ollamaModel = process.env.OLLAMA_MODEL || "llama3.1";
+      const ollamaModel = process.env.OLLAMA_MODEL || "llama3.2:3b";
       let prompt;
       if (normalizedQuestion === "__greeting__" && body.user) {
-        prompt = `Greet the user by name and introduce yourself as Oxy, their AI assistant. Mention you can help with their uploaded documents, generate summaries, and answer questions. Personalize the greeting for: Name: ${body.user.name || "User"}, Role: ${body.user.role || "Unknown"}.`;
+        prompt = `Greet the user by name and introduce yourself as Oxy, their AI assistant. Mention you can help with their uploaded documents, generate summaries, and answer questions. Personalize the greeting for: Name: ${body.user.name || "User"}, Role: ${body.user.role || "Unknown"}.  Be concise`;
       } else {
-        prompt = `You are Oxy, a friendly AI assistant. Greet the user and offer help.`;
+        prompt = `You are Oxy, a friendly AI assistant. Greet the user and offer help. Be concise.`;
       }
       const startOllama = Date.now();
       const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {

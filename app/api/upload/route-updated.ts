@@ -225,14 +225,15 @@ export async function POST(req: Request) {
       fileName,
       formatFileSize(buffer.length),
       pages,
-      ipAddress
+      ipAddress,
+      userAgent
     )
 
     return new Response(JSON.stringify({ message: "Saved", id: result.insertedId }), { status: 200 });
   } catch (error) {
     console.error(error);
 
-    // Log failed document upload using system error
+    // Log failed document upload
     try {
       const formData = await req.formData();
       const uploadedBy = formData.get("uploadedBy");
@@ -247,13 +248,16 @@ export async function POST(req: Request) {
           const ipAddress = req.headers.get('x-forwarded-for') ||
                            req.headers.get('x-real-ip') ||
                            'unknown'
+          const userAgent = req.headers.get('user-agent') || 'unknown'
           const fileName = (file as any)?.name || 'unknown'
 
-          await auditLogger.systemError(
+          await auditLogger.documentUploadFailed(
             user.name,
             user.email,
-            `Document upload failed: ${fileName} - ${error instanceof Error ? error.message : 'Unknown error'}`,
-            ipAddress
+            fileName,
+            error instanceof Error ? error.message : 'Unknown error',
+            ipAddress,
+            userAgent
           )
         }
       }

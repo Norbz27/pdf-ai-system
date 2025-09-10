@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
+import { auditLogger } from "@/lib/audit-logger"
 
 // GET - Fetch all documents
 export async function GET(req: NextRequest) {
@@ -113,6 +114,10 @@ export async function POST(req: NextRequest) {
     }
 
     const result = await db.collection("documents").insertOne(newDocument)
+
+    // Log document upload
+    const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+    await auditLogger.documentUpload('Admin', 'admin@example.com', name, size, pages, ipAddress)
 
     return NextResponse.json({
       success: true,

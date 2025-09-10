@@ -21,6 +21,9 @@ import {
   RefreshCw,
   Settings,
   MessageSquare,
+  X,
+  Plus,
+  MoreHorizontal,
 } from "lucide-react"
 import ReactMarkdown from 'react-markdown';
 import UserLayout from "@/app/user-layout"
@@ -57,7 +60,11 @@ function TypingMessage({ content, onDone }: { content: string; onDone?: () => vo
     }, 12); // ~80 chars/sec
     return () => clearInterval(interval);
   }, [content, onDone]);
-  return <ReactMarkdown>{displayed}</ReactMarkdown>;
+  return (
+    <div className="prose prose-sm max-w-none">
+      <ReactMarkdown>{displayed}</ReactMarkdown>
+    </div>
+  );
 }
 
 export default function ChatPage() {
@@ -71,13 +78,16 @@ export default function ChatPage() {
 
   const [aiOnline, setAiOnline] = useState(true)
   const [availableDocuments, setAvailableDocuments] = useState<any[]>([]);
+  const [searchMode, setSearchMode] = useState(false)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [filteredDocuments, setFilteredDocuments] = useState<any[]>([])
 
   const latestAIMessageId = [...messages]
   .reverse()
   .find((msg) => msg.type === "ai")?.id
 
   const suggestedQuestions = [
-    "What are the company's vacation policies?",
+    "What is the Oxytec Solutions Inc. COC?",
     "Summarize the Q4 financial performance",
     "What products are available in the catalog?",
     "When is the next board meeting scheduled?",
@@ -130,25 +140,7 @@ export default function ChatPage() {
     fetchDocuments();
   }, []);
 
-  // Personalized greeting logic
-  useEffect(() => {
-    async function fetchGreeting() {
-      if (user) {
-        const res = await fetch("/api/chat", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ question: "__greeting__", user })
-        });
-        if (res.ok) {
-          const data = await res.json();
-          setMessages([{ id: "1", type: "ai", content: data.answer, timestamp: new Date() }]);
-        } else {
-          setMessages([{ id: "1", type: "ai", content: `Hello ${user.name || "User"}! I'm your AI assistant. How can I help you today?`, timestamp: new Date() }]);
-        }
-      }
-    }
-    fetchGreeting();
-  }, [user]);
+
 
   const fetchAIResponse = async (prompt: string): Promise<string> => {
     const response = await fetch("/api/chat", {
@@ -219,7 +211,7 @@ export default function ChatPage() {
     }
     // Reset textarea height after sending
     if (textareaRef.current) {
-      textareaRef.current.style.height = "40px";
+      textareaRef.current.style.height = "auto";
     }
   }
 
@@ -228,22 +220,49 @@ export default function ChatPage() {
       e.preventDefault();
       handleSendMessage();
     }
-    // Shift+Enter will allow a new line by default
-  };
+  }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setInputMessage(e.target.value);
+    const value = e.target.value;
+    setInputMessage(value);
+    
     // Auto-expand textarea
     if (textareaRef.current) {
-      textareaRef.current.style.height = "40px"; // reset first
+      textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
+    
+    // Check for @ mention
+    const atIndex = value.lastIndexOf('@');
+    if (atIndex !== -1) {
+      const query = value.slice(atIndex + 1);
+      setSearchQuery(query);
+      setSearchMode(true);
+      setFilteredDocuments(
+        availableDocuments.filter(doc =>
+          doc.name.toLowerCase().includes(query.toLowerCase())
+        )
+      );
+    } else {
+      setSearchMode(false);
+      setSearchQuery("");
+      setFilteredDocuments([]);
+    }
+  };
+
+  const handleSelectDocument = (doc: any) => {
+    setSelectedDocuments(prev => [...prev, doc._id]);
+    // Remove the @ part from input
+    const atIndex = inputMessage.lastIndexOf('@');
+    const newMessage = inputMessage.slice(0, atIndex);
+    setInputMessage(newMessage);
+    setSearchMode(false);
   };
 
   const handleRetryAIResponse = async (aiMessageId: string) => {
     const userMessage = messages
-      .slice() // clone
-      .reverse() // search backwards
+      .slice()
+      .reverse()
       .find((msg) => msg.type === "user")
 
     if (!userMessage) return
@@ -253,7 +272,6 @@ export default function ChatPage() {
     try {
       const aiResponse = await fetchAIResponse(userMessage.content)
 
-      // Replace the failed AI message with a new response
       setMessages((prev) =>
         prev.map((msg) =>
           msg.id === aiMessageId
@@ -290,230 +308,262 @@ export default function ChatPage() {
   return (
     <AuthGuard requiredPermissions={['user_page_access']}>
       <UserLayout>
-        <div className="grid lg:grid-cols-4 gap-8 h-[calc(100vh-200px)]">
-          {/* Sidebar */}
-          <div className="lg:col-span-1 space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Available Documents</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-2">
-                  {availableDocuments.map((doc) => (
-                    <div
-                      key={doc._id}
-                      className={`p-3 rounded-lg border cursor-pointer transition-colors ${
-                        selectedDocuments.includes(doc._id)
-                          ? "bg-gray-200 border-[#D9D9D9]"
-                          : "hover:bg-gray-50 border-gray-200"
-                      }`}
-                      onClick={() => {
-                        setSelectedDocuments((prev) =>
-                          prev.includes(doc._id) ? prev.filter((id) => id !== doc._id) : [...prev, doc._id],
-                        )
-                      }}
-                    >
-                      <div className="flex items-center space-x-2">
-                        <FileText className="h-4 w-4 text-600" />
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-gray-900 truncate">{doc.name}</p>
-                          <div className="flex items-center space-x-2 text-xs text-gray-500">
-                            {doc.pages && <span>{doc.pages} pages</span>}
-                            {doc.size && <span>• {doc.size}</span>}
-                            {doc.categoryName && <span>• {doc.categoryName}</span>}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
+        <div className="flex flex-col h-full overflow-hidden">
+          {/* Header */}
+          <div className="flex items-center justify-between px-6 py-4">
+            <div className="flex items-center space-x-3">
+              <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
+                <Bot className="w-5 h-5 text-gray-600" />
+              </div>
+              <div>
+                <h1 className="text-lg font-semibold text-gray-900">AI Assistant</h1>
+                <p className="text-sm text-gray-500">
+                  {selectedDocuments.length > 0
+                    ? `Using ${selectedDocuments.length} document(s)`
+                    : "Ready to help"}
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center space-x-3">
+              <Badge
+                variant={aiOnline ? "default" : "destructive"}
+                className="text-xs"
+              >
+                {aiOnline ? "Online" : "Offline"}
+              </Badge>
+            </div>
           </div>
 
-          {/* Main Chat Area */}
-          <div className="flex-1 overflow-hidden flex flex-col lg:col-span-3">
-           <Card className="flex flex-col h-full">
-              <CardHeader className="border-b">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center space-x-2">
-                    <Bot className="h-6 w-6 text-600" />
-                    <div>
-                      <CardTitle>AI Assistant</CardTitle>
-                      <p className="text-sm text-gray-500">
-                        {selectedDocuments.length > 0
-                          ? `Analyzing ${selectedDocuments.length} document(s)`
-                          : "Ready to help with your documents"}
-                      </p>
+          {/* Messages Container */}
+          <div className="h-[calc(90vh-180px)] ">
+            <ScrollArea className="h-full">
+              <div className="max-w-4xl mx-auto">
+                {/* Empty State */}
+                {messages.length === 0 && (
+                  <div className="flex flex-col items-center justify-center h-full px-6 py-20">
+                    <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-6">
+                      <Bot className="w-8 h-8 text-gray-600" />
+                    </div>
+                    <h2 className="text-2xl font-semibold text-gray-900 mb-2">How can I help you today?</h2>
+                    <p className="text-gray-500 text-center mb-8">I can help you analyze documents, answer questions, and assist with various tasks.</p>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 w-full max-w-2xl">
+                      {suggestedQuestions.map((question, index) => (
+                        <button
+                          key={index}
+                          onClick={() => handleSuggestedQuestion(question)}
+                          className="p-4 text-left bg-gray-50 hover:bg-gray-100 rounded-lg border border-gray-200 transition-colors duration-200"
+                        >
+                          <div className="font-medium text-gray-900 mb-1">{question}</div>
+                        </button>
+                      ))}
                     </div>
                   </div>
-                  <div className="flex items-center space-x-2">
-                    <Badge
-                      variant="outline"
-                      className={aiOnline ? "text-green-600 border-green-200" : "text-red-500 border-red-200"}>
-                      {aiOnline ? "Ollama Online" : "Ollama Offline"}
-                    </Badge>
-                    {!aiOnline && (
-                      <div className="text-xs text-gray-500">
-                        Run: docker-compose up -d
-                      </div>
-                    )}
-                  </div>
-                </div>
-              </CardHeader>
+                )}
 
-              {/* Messages */}
-              <ScrollArea className="flex-1 p-6 overflow-y-auto max-h-[calc(100vh-260px)]">
-                <div className="space-y-6">
-                  {messages.map((message, idx) => {
-                    const isLatestAI = message.type === "ai" && message.id === latestAIMessageId && idx === messages.length - 1;
-                    return (
-                      <div key={message.id} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
-                        <div className={`flex space-x-3 max-w-3xl ${message.type === "user" ? "flex-row-reverse space-x-reverse" : ""}`}>
-                          <Avatar className="h-8 w-8">
-                            {message.type === "user" ? (
-                              <AvatarFallback>
-                                <User className="h-4 w-4" />
-                              </AvatarFallback>
-                            ) : (
-                              <AvatarFallback className="bg-gray-100">
-                                <Bot className="h-4 w-4 text-[#2C2C2C]" />
-                              </AvatarFallback>
-                            )}
-                          </Avatar>
-                          <div className={`space-y-2 ${message.type === "user" ? "items-end" : "items-start"} flex flex-col`}>
-                            <div className={`p-4 rounded-lg ${message.type === "user" ? "bg-[#2C2C2C] text-white" : "bg-white border shadow-sm"}`}>
-                              <div className="text-sm whitespace-pre-wrap">
-                                {isLatestAI ? (
-                                  <TypingMessage content={message.content} />
-                                ) : (
-                                  <ReactMarkdown>{message.content}</ReactMarkdown>
-                                )}
-                              </div>
-                              {message.attachments && (
-                                <div className="mt-2 space-y-1">
-                                  {message.attachments.map((attachment, index) => (
-                                    <div key={index} className="flex items-center space-x-2 text-xs opacity-75">
-                                      <Paperclip className="h-3 w-3" />
-                                      <span>{attachment.name}</span>
-                                    </div>
-                                  ))}
-                                </div>
+                {/* Messages */}
+                {messages.length > 0 ? (
+                  <div className="space-y-6 pt-6 px-6 pb-6">
+                    {messages.map((message, idx) => {
+                      const isLatestAI = message.type === "ai" && message.id === latestAIMessageId && idx === messages.length - 1;
+                      return (
+                        <div key={message.id} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
+                          <div className={`flex space-x-3 max-w-[75%] ${message.type === "user" ? "flex-row-reverse space-x-reverse" : ""}`}>
+                            <Avatar className="h-8 w-8 flex-shrink-0">
+                              {message.type === "user" ? (
+                                <AvatarFallback className="bg-[#2C2C2C]">
+                                  <User className="h-4 w-4 text-white" />
+                                </AvatarFallback>
+                              ) : (
+                                <AvatarFallback className="bg-gray-100">
+                                  <Bot className="h-4 w-4 text-gray-600" />
+                                </AvatarFallback>
                               )}
-                            </div>
-
-                            {message.sources && (
-                              <div className="bg-gray-50 rounded-lg p-3 text-xs">
-                                <p className="font-medium text-gray-700 mb-2">Sources:</p>
-                                {message.sources.map((source, index) => (
-                                  <div key={index} className="flex items-center justify-between text-gray-600">
-                                    <span>
-                                      {source.document} (Page {source.page})
-                                    </span>
-                                    <Badge variant="outline" className="text-xs">
-                                      {Math.round(source.relevance * 100)}% match
-                                    </Badge>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-
-                            <div className="flex items-center space-x-2 text-xs text-gray-500">
-                              <span>{message.timestamp.toLocaleTimeString()}</span>
-                              {message.type === "ai" && (
-                                <div className="flex items-center space-x-1">
-                                  <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
-                                    <Copy className="h-3 w-3" />
-                                  </Button>
-                                  {message.id === latestAIMessageId && (
-                                    <Button
-                                      variant="ghost"
-                                      size="sm"
-                                      className="h-6 w-6 p-0"
-                                      onClick={() => handleRetryAIResponse(message.id)}
-                                    >
-                                      <RefreshCcw className="h-3 w-3" />
-                                    </Button>
+                            </Avatar>
+                            
+                            <div className={`space-y-2 ${message.type === "user" ? "items-end" : "items-start"} flex flex-col group`}>
+                              <div className={`p-4 ${
+                                message.type === "user" 
+                                  ? "bg-[#2C2C2C] text-white rounded-2xl rounded-br-md" 
+                                  : "bg-white border border-gray-200 shadow-sm rounded-2xl rounded-bl-md"
+                              }`}>
+                                <div className="text-sm leading-relaxed">
+                                  {isLatestAI ? (
+                                    <TypingMessage content={message.content} />
+                                  ) : (
+                                    <div className="prose prose-sm max-w-none [&>*:last-child]:mb-0 [&>*:first-child]:mt-0 [&>p]:mb-2 [&>ul]:mb-2 [&>ol]:mb-2">
+                                      <ReactMarkdown>
+                                        {message.content}
+                                      </ReactMarkdown>
+                                    </div>
                                   )}
                                 </div>
+                                
+                                {message.attachments && (
+                                  <div className="mt-3 space-y-2">
+                                    {message.attachments.map((attachment, index) => (
+                                      <div key={index} className={`flex items-center space-x-2 text-xs ${
+                                        message.type === "user" ? "text-blue-100" : "text-gray-500"
+                                      }`}>
+                                        <Paperclip className="h-3 w-3" />
+                                        <span>{attachment.name}</span>
+                                      </div>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+
+                              {message.sources && (
+                                <div className="bg-gray-50 rounded-xl p-3 text-xs border border-gray-100">
+                                  <p className="font-medium text-gray-700 mb-2">Sources:</p>
+                                  <div className="space-y-1">
+                                    {message.sources.map((source, index) => (
+                                      <div key={index} className="flex items-center justify-between text-gray-600">
+                                        <span className="truncate mr-2">
+                                          {source.document} (Page {source.page})
+                                        </span>
+                                        <Badge variant="outline" className="text-xs flex-shrink-0">
+                                          {Math.round(source.relevance * 100)}% match
+                                        </Badge>
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
                               )}
+
+                              <div className={`flex items-center space-x-2 text-xs text-gray-500 px-1 opacity-0 group-hover:opacity-100 transition-opacity ${
+                                message.type === "user" ? "justify-end" : "justify-start"
+                              }`}>
+                                <span>{message.timestamp.toLocaleTimeString()}</span>
+                                
+                                {message.type === "ai" && (
+                                  <div className="flex items-center space-x-1">
+                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-gray-200 rounded-md">
+                                      <Copy className="h-3 w-3" />
+                                    </Button>
+                                    
+                                    {message.id === latestAIMessageId && (
+                                      <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="h-6 w-6 p-0 hover:bg-gray-200 rounded-md"
+                                        onClick={() => handleRetryAIResponse(message.id)}
+                                      >
+                                        <RefreshCcw className="h-3 w-3" />
+                                      </Button>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {isLoading && (
+                      <div className="flex justify-start">
+                        <div className="flex space-x-3 max-w-[75%]">
+                          <Avatar className="h-8 w-8 flex-shrink-0">
+                            <AvatarFallback className="bg-gray-100">
+                              <Bot className="h-4 w-4 text-gray-600" />
+                            </AvatarFallback>
+                          </Avatar>
+                          
+                          <div className="bg-white border border-gray-200 shadow-sm rounded-2xl rounded-bl-md p-4">
+                            <div className="flex items-center space-x-3">
+                              <div className="flex space-x-1">
+                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.1s"}}></div>
+                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.2s"}}></div>
+                              </div>
+                              <span className="text-sm text-gray-600">AI is thinking...</span>
                             </div>
                           </div>
                         </div>
                       </div>
-                    );
-                  })}
+                    )}
+                    
+                    <div ref={messagesEndRef} />
+                  </div>
+                ) : (
+                  <div ref={messagesEndRef} />
+                )}
+              </div>
+            </ScrollArea>
+          </div>
 
-                  {isLoading && (
-                    <div className="flex justify-start">
-                      <div className="flex space-x-3 max-w-3xl">
-                        <Avatar className="h-8 w-8">
-                          <AvatarFallback className="bg-blue-100">
-                            <Bot className="h-4 w-4 text-blue-600" />
-                          </AvatarFallback>
-                        </Avatar>
-                        <div className="bg-white border shadow-sm rounded-lg p-4">
-                          <div className="flex items-center space-x-2">
-                            <RefreshCw className="h-4 w-4 animate-spin text-blue-600" />
-                            <span className="text-sm text-gray-600">AI is thinking...</span>
-                          </div>
+          {/* Input Area */}
+          <div className="fixed bottom-0 left-0 right-0">
+            <div className="px-4 py-4 flex justify-center">
+              <div className="w-full max-w-3xl relative">
+                {/* Document Search Dropdown */}
+                {searchMode && filteredDocuments.length > 0 && (
+                  <div className="absolute bottom-full mb-2 bg-white border border-gray-200 rounded-xl shadow-lg max-h-48 overflow-y-auto w-full z-10">
+                    {filteredDocuments.map(doc => (
+                      <div
+                        key={doc._id}
+                        className="p-3 hover:bg-gray-50 cursor-pointer border-b border-gray-100 last:border-b-0 first:rounded-t-xl last:rounded-b-xl"
+                        onClick={() => handleSelectDocument(doc)}
+                      >
+                        <div className="flex items-center space-x-2">
+                          <FileText className="w-4 h-4 text-gray-500" />
+                          <span className="text-sm text-gray-900">{doc.name}</span>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-                <div ref={messagesEndRef} />
-              </ScrollArea>
-
-              {/* Suggested Questions */}
-              {messages.length === 1 && (
-                <div className="px-6 py-4 border-t bg-gray-50">
-                  <p className="text-sm font-medium text-gray-700 mb-3">Suggested questions:</p>
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                    {suggestedQuestions.map((question, index) => (
-                      <button
-                        key={index}
-                        onClick={() => handleSuggestedQuestion(question)}
-                        className="text-left p-3 bg-white rounded-lg border hover:border-blue-300 hover:bg-blue-50 transition-colors text-sm"
-                      >
-                        {question}
-                      </button>
                     ))}
                   </div>
-                </div>
-              )}
+                )}
 
-              {/* Input Area */}
-              <div className="p-6 border-t">
-                <div className="flex space-x-4">
-                  <div className="flex-1">
-                    <Textarea
-                      ref={textareaRef}
-                      placeholder="Ask a question about your documents..."
-                      value={inputMessage}
-                      onChange={handleInputChange}
-                      onKeyDown={handleInputKeyDown}
-                      className="w-full resize-none min-h-[40px] max-h-[200px]"
-                    />
-                  </div>
-                  <Button variant="dark" onClick={handleSendMessage} disabled={!inputMessage.trim() || isLoading}>
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
+                {/* Selected Documents */}
                 {selectedDocuments.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-2">
+                  <div className="mb-3 flex flex-wrap gap-2">
                     {selectedDocuments.map((docId) => {
                       const doc = availableDocuments.find((d) => d._id === docId)
                       return (
-                        <Badge key={docId} variant="secondary" className="text-xs">
+                        <Badge key={docId} variant="secondary" className="flex items-center gap-1 px-3 py-1 rounded-full">
+                          <FileText className="w-3 h-3" />
                           {doc?.name}
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-4 w-4 p-0 ml-1 hover:bg-red-100 rounded-full"
+                            onClick={() => setSelectedDocuments(prev => prev.filter(id => id !== docId))}
+                          >
+                            <X className="w-3 h-3" />
+                          </Button>
                         </Badge>
                       )
                     })}
                   </div>
                 )}
+
+                {/* Input Box */}
+                <div className="flex items-end space-x-3 bg-gray-50 rounded-2xl border border-gray-200 p-3 shadow-sm">
+                  <Textarea
+                    ref={textareaRef}
+                    placeholder="Message AI Assistant..."
+                    value={inputMessage}
+                    onChange={handleInputChange}
+                    onKeyDown={handleInputKeyDown}
+                    className="flex-1 min-h-[24px] max-h-[200px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-2 rounded-lg"
+                    rows={1}
+                  />
+                  <Button 
+                    onClick={handleSendMessage} 
+                    disabled={!inputMessage.trim() || isLoading}
+                    className="flex-shrink-0 w-10 h-10 p-0 rounded-xl bg-[#2C2C2C] hover:bg-gray-680 disabled:bg-gray-300"
+                  >
+                    <Send className="w-4 h-4" />
+                  </Button>
+                </div>
+
+                {/* Help Text */}
+                <div className="flex items-center justify-center mt-3">
+                  
+                </div>
               </div>
-            </Card>
+            </div>
           </div>
         </div>
       </UserLayout>

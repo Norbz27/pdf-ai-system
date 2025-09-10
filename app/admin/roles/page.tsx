@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Checkbox } from "@/components/ui/checkbox"
-import { 
+import {
   Table,
   TableBody,
   TableCell,
@@ -14,11 +14,11 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { 
-  Shield, 
-  Plus, 
-  Edit, 
-  Trash2, 
+import {
+  Shield,
+  Plus,
+  Edit,
+  Trash2,
   MoreHorizontal,
   Users,
   Check
@@ -92,6 +92,13 @@ export default function RolesPage() {
   const fetchRoles = async () => {
     try {
       setLoading(true)
+
+      // First recalculate user counts to ensure accuracy
+      await fetch('/api/admin/roles/recalculate-user-count', {
+        method: 'POST',
+      })
+
+      // Then fetch the updated roles
       const response = await fetch('/api/admin/roles')
       if (!response.ok) {
         throw new Error('Failed to fetch roles')
@@ -412,7 +419,7 @@ export default function RolesPage() {
                             <Edit className="h-4 w-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             className="text-red-600"
                             onClick={() => handleDeleteRole(role._id)}
                           >
@@ -508,4 +515,4 @@ export default function RolesPage() {
       </Dialog>
     </div>
   )
-} 
+}

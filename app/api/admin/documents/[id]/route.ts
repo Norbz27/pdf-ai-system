@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
 import { ObjectId } from "mongodb"
+import { auditLogger } from "@/lib/audit-logger"
 
 // PUT - Update document
 export async function PUT(
@@ -154,6 +155,10 @@ export async function DELETE(
       )
     }
 
+    // Log document deletion
+    const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+    await auditLogger.documentDelete('Admin', 'admin@example.com', document.name, ipAddress)
+
     // TODO: If document has a filePath, you might want to delete the actual file
     // This would require file system operations to remove the PDF file
     // if (document.filePath) {
@@ -171,4 +176,4 @@ export async function DELETE(
       { status: 500 }
     )
   }
-} 
+}

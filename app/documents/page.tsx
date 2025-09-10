@@ -29,6 +29,8 @@ import ReactMarkdown from 'react-markdown';
 import Link from "next/link"
 import UserLayout from "@/app/user-layout"
 import AuthGuard from "@/app/components/AuthGuard"
+import { useToast } from "@/hooks/use-toast"
+import { useUser } from "../contexts/UserContext"
 import {
   Dialog,
   DialogTrigger,
@@ -37,8 +39,12 @@ import {
   DialogTitle,
   DialogClose,
 } from "@/components/ui/dialog";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import ReactSelect from "react-select"
 
 export default function Dashboard() {
+  const { toast } = useToast()
+  const { user } = useUser()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedCategory, setSelectedCategory] = useState("all")
   const [documents, setDocuments] = useState<any[]>([])
@@ -47,23 +53,58 @@ export default function Dashboard() {
   const [error, setError] = useState<string | null>(null)
   const [viewingDoc, setViewingDoc] = useState<any | null>(null);
   const [numPages, setNumPages] = useState<number>(0);
+  const [managingAccessDoc, setManagingAccessDoc] = useState<any | null>(null);
+  const [searchType, setSearchType] = useState("name");
+  const [accessName, setAccessName] = useState<string[]>([]);
+  const [accessRole, setAccessRole] = useState<string[]>([]);
+
+  const [roles, setRoles] = useState<any[]>([]);
+  const [users, setUsers] = useState<any[]>([]);
 
   useEffect(() => {
     const fetchData = async () => {
+      if (!user) {
+        setLoading(false)
+        return
+      }
       setLoading(true)
       setError(null)
       try {
+        const userId = user._id;
+        const userRole = user.role;
         // Fetch documents
-        const docsRes = await fetch("/api/documents")
+        const docsRes = await fetch(`/api/documents?userId=${userId}&userRole=${userRole}`)
         if (!docsRes.ok) throw new Error("Failed to fetch documents")
         const docsData = await docsRes.json()
         setDocuments(docsData.documents || [])
-        
+
         // Fetch categories
         const catsRes = await fetch("/api/categories")
         if (catsRes.ok) {
           const catsData = await catsRes.json()
           setCategories(catsData.categories || [])
+        }
+
+        // Fetch roles
+        const rolesRes = await fetch("/api/roles", {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
+        })
+        if (rolesRes.ok) {
+          const rolesData = await rolesRes.json()
+          setRoles(rolesData.roles || [])
+        }
+
+        // Fetch users
+        const usersRes = await fetch("/api/users", {
+          headers: {
+            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+          }
+        })
+        if (usersRes.ok) {
+          const usersData = await usersRes.json()
+          setUsers(usersData.users || [])
         }
       } catch (err: any) {
         setError(err.message || "Failed to fetch data")
@@ -72,7 +113,7 @@ export default function Dashboard() {
       }
     }
     fetchData()
-  }, [])
+  }, [user])
 
   const stats = [
     { label: "Total Documents", value: documents.length.toString(), icon: FileText, change: "+3 this week" }
@@ -112,7 +153,11 @@ export default function Dashboard() {
   // Handler for downloading a document
   const handleDownload = (doc: any) => {
     if (!doc.filePath) {
-      alert("No file path available for download.");
+      toast({
+        title: "Error",
+        description: "No file path available for download.",
+        variant: "destructive"
+      });
       return;
     }
     // Create a download link and trigger it
@@ -133,13 +178,64 @@ export default function Dashboard() {
         window.URL.revokeObjectURL(url);
       })
       .catch(err => {
-        alert(err.message || "Failed to download file");
+        toast({
+          title: "Error",
+          description: err.message || "Failed to download file",
+          variant: "destructive"
+        });
       });
   };
 
-  // Handler for managing access (placeholder)
+  // Handler for managing access
   const handleManageAccess = (doc: any) => {
-    alert(`Manage Access for: ${doc.name}`);
+    setManagingAccessDoc(doc);
+  };
+
+  // Handler for adding access
+  const handleAddAccess = async () => {
+    const targets = searchType === "name" ? accessName : accessRole;
+    if (!targets || targets.length === 0) {
+      toast({
+        title: "Validation Error",
+        description: "Please select a user or role",
+        variant: "destructive"
+      });
+      return;
+    }
+    try {
+      const res = await fetch(`/api/documents/${managingAccessDoc._id}/access`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
+        },
+        body: JSON.stringify({
+          type: searchType,
+          values: targets
+        })
+      });
+      if (res.ok) {
+        toast({
+          title: "Success",
+          description: "Access added successfully"
+        });
+        setAccessName([]);
+        setAccessRole([]);
+      } else {
+        const error = await res.json();
+        toast({
+          title: "Error",
+          description: error.error || 'Failed to add access',
+          variant: "destructive"
+        });
+      }
+    } catch (err) {
+      toast({
+        title: "Error",
+        description: 'Error adding access',
+        variant: "destructive"
+      });
+    }
   };
 
   // Handler for deleting a document
@@ -150,7 +246,11 @@ export default function Dashboard() {
       if (!res.ok) throw new Error("Failed to delete document");
       setDocuments((prev) => prev.filter((d) => d._id !== doc._id));
     } catch (err: any) {
-      alert(err.message || "Failed to delete document");
+      toast({
+        title: "Error",
+        description: err.message || "Failed to delete document",
+        variant: "destructive"
+      });
     }
   };
 
@@ -179,6 +279,128 @@ export default function Dashboard() {
           <DialogClose asChild>
             <Button variant="outline" className="mt-4">Close</Button>
           </DialogClose>
+        </DialogContent>
+      </Dialog>
+
+      {/* Modal for managing access */}
+      <Dialog open={!!managingAccessDoc} onOpenChange={(open) => !open && setManagingAccessDoc(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Manage Access for: {managingAccessDoc?.name}</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-medium mb-1">Search Type</label>
+              <Select value={searchType} onValueChange={setSearchType}>
+                <SelectTrigger>
+                  <SelectValue placeholder="Select search type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="name">By Name</SelectItem>
+                  <SelectItem value="role">By Role</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            {searchType === "name" ? (
+              <div>
+                <label className="block text-sm font-medium mb-1">User Name</label>
+                <ReactSelect
+                  isMulti
+                  options={users.map(u => ({ value: u.name, label: u.name }))}
+                  value={accessName.map(name => ({ value: name, label: name }))}
+                  onChange={(selected) => setAccessName(selected ? selected.map(s => s.value) : [])}
+                  isSearchable
+                  placeholder="Select users"
+                  styles={{
+                    control: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      borderColor: '#d1d5db',
+                      borderRadius: '6px',
+                      minHeight: '36px',
+                      boxShadow: 'none',
+                      '&:hover': {
+                        borderColor: '#9ca3af',
+                      },
+                    }),
+                    option: (provided, state) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
+                      color: state.isFocused ? 'black' : 'black',
+                    }),
+                    placeholder: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      color: '#9ca3af',
+                    }),
+                    multiValue: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                    multiValueLabel: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                    multiValueRemove: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                  }}
+                />
+              </div>
+            ) : (
+              <div>
+                <label className="block text-sm font-medium mb-1">Role</label>
+                <ReactSelect
+                  isMulti
+                  options={roles.map(r => ({ value: r.name, label: r.name }))}
+                  value={accessRole.map(role => ({ value: role, label: role }))}
+                  onChange={(selected) => setAccessRole(selected ? selected.map(s => s.value) : [])}
+                  isSearchable
+                  placeholder="Select roles"
+                  styles={{
+                    control: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      borderColor: '#d1d5db',
+                      borderRadius: '6px',
+                      minHeight: '36px',
+                      boxShadow: 'none',
+                      '&:hover': {
+                        borderColor: '#9ca3af',
+                      },
+                    }),
+                    option: (provided, state) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
+                      color: state.isFocused ? 'black' : 'black',
+                    }),
+                    placeholder: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                      color: '#9ca3af',
+                    }),
+                    multiValue: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                    multiValueLabel: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                    multiValueRemove: (provided) => ({
+                      ...provided,
+                      fontSize: '14px',
+                    }),
+                  }}
+                />
+              </div>
+            )}
+
+            <Button onClick={handleAddAccess}>Add Access</Button>
+          </div>
         </DialogContent>
       </Dialog>
         
@@ -287,6 +509,7 @@ export default function Dashboard() {
                             <FileText className="h-5 w-5" />
                             <h3 className="font-semibold text-gray-900">{doc.name}</h3>
                           <Badge variant="outline">{doc.categoryName || 'Uncategorized'}</Badge>
+                          {user && doc.uploadedBy?.toString() !== user._id && doc.sharedWith?.some((id: string) => id === user._id) && <Badge variant="secondary">Shared</Badge>}
                           </div>
                             <p className="text-sm text-gray-600 mb-3">{doc.description}</p>
                           <div className="flex items-center space-x-6 text-xs text-gray-500">
@@ -313,14 +536,18 @@ export default function Dashboard() {
                               <Download className="h-4 w-4 mr-2" />
                               Download
                             </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => handleManageAccess(doc)}>
-                              <Key className="h-4 w-4 mr-2" />
-                              Manage Access
-                            </DropdownMenuItem>
-                              <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(doc)}>
-                              <Trash2 className="h-4 w-4 mr-2" />
-                              Delete
-                            </DropdownMenuItem>
+                              {doc.uploadedBy?.toString() === user?._id && (
+                                <DropdownMenuItem onClick={() => handleManageAccess(doc)}>
+                                  <Key className="h-4 w-4 mr-2" />
+                                  Manage Access
+                                </DropdownMenuItem>
+                              )}
+                              {doc.uploadedBy?.toString() === user?._id && (
+                                <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(doc)}>
+                                  <Trash2 className="h-4 w-4 mr-2" />
+                                  Delete
+                                </DropdownMenuItem>
+                              )}
                           </DropdownMenuContent>
                         </DropdownMenu>
                       </div>

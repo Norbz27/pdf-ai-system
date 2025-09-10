@@ -478,9 +478,9 @@ export default function LandingPage() {
   return (
     <div className="min-h-screen from-blue-50 to-indigo-100 flex items-center justify-center px-4">
       <div className="mt-[-100px] w-[320px] space-y-8">
-        <div className="text-center space-y-2">
-          <FileText className="h-8 w-8 mx-auto text-dark-200" />
-          <p className="text-xl text-gray-600 font-bold leading-relaxed">DocuMind AI</p>
+        <div className="text-center space-y-1">
+          <img src="/logo/OXY_gray.png" alt="OXY Logo" className="h-14 w-14 mx-auto" />
+          <p className="text-xl text-gray-600 font-bold leading-relaxed">Oxy</p>
           <p className="text-sm text-gray-500">Sign in to your account</p>
         </div>
 

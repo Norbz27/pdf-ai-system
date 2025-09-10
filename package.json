@@ -73,6 +73,7 @@
     "react-markdown": "^10.1.0",
     "react-pdf": "^10.0.1",
     "react-resizable-panels": "^2.1.7",
+    "react-select": "^5.10.2",
     "recharts": "2.15.0",
     "sonner": "^1.7.1",
     "speakeasy": "^2.0.0",

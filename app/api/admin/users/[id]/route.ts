@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server"
 import clientPromise from "@/lib/mongodb"
 import { ObjectId } from "mongodb"
+import { auditLogger } from "@/lib/audit-logger"
 
 // PUT - Update user
 export async function PUT(
@@ -192,6 +193,10 @@ export async function DELETE(
         { $inc: { userCount: -1 } }
       )
     }
+
+    // Log user deletion
+    const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+    await auditLogger.userDeleted('Admin', 'admin@example.com', user.name, user.email, user.role, ipAddress)
 
     return NextResponse.json({
       success: true,

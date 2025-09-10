@@ -1,96 +1,85 @@
 "use client"
 
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { 
-  FileText, 
-  Users, 
-  MessageSquare, 
+import {
+  FileText,
+  Users,
+  MessageSquare,
   TrendingUp,
   Upload,
   Eye,
   Clock,
   User
 } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
 
-// Mock data - replace with real data from your API
-const stats = [
-  {
-    title: "Total Documents",
-    value: "1,234",
-    change: "+12%",
-    changeType: "positive",
-    icon: FileText,
-    color: "text-blue-600"
-  },
-  {
-    title: "Total Users",
-    value: "89",
-    change: "+5%",
-    changeType: "positive",
-    icon: Users,
-    color: "text-green-600"
-  },
-  {
-    title: "Total Queries",
-    value: "5,678",
-    change: "+23%",
-    changeType: "positive",
-    icon: MessageSquare,
-    color: "text-purple-600"
-  },
-  {
-    title: "Processing Rate",
-    value: "98.5%",
-    change: "+2.1%",
-    changeType: "positive",
-    icon: TrendingUp,
-    color: "text-orange-600"
-  }
-]
+interface Stat {
+  title: string
+  value: string
+  change: string
+  changeType: string
+  icon: string
+  color: string
+}
 
-const recentActivity = [
-  {
-    id: 1,
-    type: "upload",
-    user: "John Doe",
-    action: "uploaded",
-    document: "Q4_Financial_Report.pdf",
-    time: "2 minutes ago",
-    avatar: "/placeholder-user.jpg"
-  },
-  {
-    id: 2,
-    type: "query",
-    user: "Jane Smith",
-    action: "queried",
-    document: "Technical_Manual.pdf",
-    time: "5 minutes ago",
-    avatar: "/placeholder-user.jpg"
-  },
-  {
-    id: 3,
-    type: "login",
-    user: "Mike Johnson",
-    action: "logged in",
-    document: null,
-    time: "10 minutes ago",
-    avatar: "/placeholder-user.jpg"
-  },
-  {
-    id: 4,
-    type: "upload",
-    user: "Sarah Wilson",
-    action: "uploaded",
-    document: "Product_Catalog.pdf",
-    time: "15 minutes ago",
-    avatar: "/placeholder-user.jpg"
-  }
-]
+interface Activity {
+  id: string
+  type: string
+  user: string
+  action: string
+  document: string | null
+  time: string
+  avatar: string
+}
+
+interface UploadTrend {
+  _id: string
+  count: number
+}
 
 export default function AdminDashboard() {
+  const [stats, setStats] = useState<Stat[]>([])
+  const [recentActivity, setRecentActivity] = useState<Activity[]>([])
+  const [uploadTrends, setUploadTrends] = useState<UploadTrend[]>([])
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
+
+  useEffect(() => {
+    fetchDashboardData()
+  }, [])
+
+  const fetchDashboardData = async () => {
+    try {
+      setLoading(true)
+      const response = await fetch('/api/admin/dashboard')
+      if (!response.ok) {
+        throw new Error('Failed to fetch dashboard data')
+      }
+      const data = await response.json()
+      setStats(data.stats || [])
+      setRecentActivity(data.recentActivity || [])
+      setUploadTrends(data.uploadTrends || [])
+    } catch (error) {
+      console.error('Error fetching dashboard data:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const getIconComponent = (iconName: string) => {
+    switch (iconName) {
+      case 'FileText': return FileText
+      case 'Users': return Users
+      case 'MessageSquare': return MessageSquare
+      case 'TrendingUp': return TrendingUp
+      default: return FileText
+    }
+  }
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -99,10 +88,6 @@ export default function AdminDashboard() {
           <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
           <p className="text-gray-600">Welcome back! Here's what's happening with your system.</p>
         </div>
-        <Button className="flex items-center space-x-2">
-          <Upload className="h-4 w-4" />
-          <span>Upload Document</span>
-        </Button>
       </div>
 
       {/* Stats Cards */}
@@ -113,7 +98,10 @@ export default function AdminDashboard() {
               <CardTitle className="text-sm font-medium text-gray-600">
                 {stat.title}
               </CardTitle>
-              <stat.icon className={`h-4 w-4 ${stat.color}`} />
+              {(() => {
+                const Icon = getIconComponent(stat.icon)
+                return <Icon className={`h-4 w-4 ${stat.color}`} />
+              })()}
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold text-gray-900">{stat.value}</div>
@@ -124,7 +112,7 @@ export default function AdminDashboard() {
                 >
                   {stat.change}
                 </Badge>
-                <span className="text-xs text-gray-500">from last month</span>
+                <span className="sr-only">from last month</span>
               </div>
             </CardContent>
           </Card>
@@ -140,12 +128,29 @@ export default function AdminDashboard() {
               <CardTitle>Document Upload Trends</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="h-64 flex items-center justify-center bg-gray-50 rounded-lg">
-                <div className="text-center">
-                  <TrendingUp className="h-12 w-12 text-gray-400 mx-auto mb-4" />
-                  <p className="text-gray-500">Chart component would go here</p>
-                  <p className="text-sm text-gray-400">Showing upload trends over the last 30 days</p>
-                </div>
+              <div className="h-64">
+                {uploadTrends.length > 0 ? (
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={uploadTrends.map(trend => ({
+                      date: new Date(trend._id).toLocaleDateString(),
+                      uploads: trend.count
+                    }))}>
+                      <CartesianGrid strokeDasharray="3 3" />
+                      <XAxis dataKey="date" />
+                      <YAxis />
+                      <Tooltip />
+                      <Bar dataKey="uploads" fill="#3b82f6" />
+                    </BarChart>
+                  </ResponsiveContainer>
+                ) : (
+                  <div className="h-full flex items-center justify-center bg-gray-50 rounded-lg">
+                    <div className="text-center">
+                      <TrendingUp className="h-12 w-12 text-gray-400 mx-auto mb-4" />
+                      <p className="text-gray-500">No upload data available</p>
+                      <p className="text-sm text-gray-400">Upload trends will appear here</p>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

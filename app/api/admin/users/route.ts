@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import nodemailer from 'nodemailer'
 import speakeasy from 'speakeasy'
 import qrcode from 'qrcode'
+import { auditLogger } from "@/lib/audit-logger"
 
 declare module 'nodemailer';
 declare module 'speakeasy';
@@ -186,7 +187,7 @@ For security reasons, this email will only be sent once. Please save these instr
   }
 }
 
-// POST - Create new user
+ // POST - Create new user
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json()
@@ -270,6 +271,10 @@ export async function POST(req: NextRequest) {
       { $inc: { userCount: 1 } }
     )
 
+    // Log user creation
+    const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+    await auditLogger.userCreated('Admin', 'admin@example.com', name, email, role, ipAddress)
+
     // Try to send email, but don't fail user creation if it fails
     let emailError = null
     try {
@@ -309,19 +314,19 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
     if (action === "reset_password") {
-      const newPassword = generateRandomPassword();
+      const { newPassword } = body;
+      if (!newPassword) {
+        return NextResponse.json({ error: "New password is required" }, { status: 400 });
+      }
       const hashedPassword = await bcrypt.hash(newPassword, 10);
       await db.collection("users").updateOne({ _id: user._id }, { $set: { password: hashedPassword } });
-      // Reuse 2FA secret and generate QR code
-      const qrUrl = speakeasy.otpauthURL({ secret: user.twoFASecret, label: `DocuMind AI (${user.email})` });
-      if (!qrUrl) {
-        throw new Error("Failed to generate QR code URL");
-      }
-      // Generate QR code as a local image file
-      const qrImagePath = `public/uploads/${user.email}-qr.png`;
-      await qrcode.toFile(qrImagePath, qrUrl);
-      await sendAccountEmail(user.email, newPassword, qrImagePath, user.twoFASecret);
-      return NextResponse.json({ success: true, message: "Password reset and email sent." });
+
+      // Log user update
+      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'Password reset', ipAddress)
+
+      // Removed email sending on password reset as per user request
+      return NextResponse.json({ success: true, message: "Password reset successfully." });
     } else if (action === "resend_verification") {
       // Reuse last password (cannot send plain password, so generate a new one if needed)
       const password = "********"; // Hide password for security
@@ -333,25 +338,34 @@ export async function PATCH(req: NextRequest) {
       const qrImagePath = `public/uploads/${user.email}-qr.png`;
       await qrcode.toFile(qrImagePath, qrUrl);
       await sendAccountEmail(user.email, password, qrImagePath, user.twoFASecret);
+
+      // Log user update
+      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'Verification email resent', ipAddress)
+
       return NextResponse.json({ success: true, message: "Verification email resent." });
     } else if (action === "view_qr_code") {
       // Generate QR code for existing user
       if (!user.twoFASecret) {
         return NextResponse.json({ error: "User does not have a 2FA secret" }, { status: 400 });
       }
-      const qrUrl = await qrcode.toDataURL(speakeasy.otpauthURL({ 
-        secret: user.twoFASecret, 
-        label: `DocuMind AI (${user.email})` 
+      const qrUrl = await qrcode.toDataURL(speakeasy.otpauthURL({
+        secret: user.twoFASecret,
+        label: `DocuMind AI (${user.email})`
       }));
-      return NextResponse.json({ 
-        success: true, 
-        qrCodeUrl: qrUrl, 
+
+      // Log user update
+      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'QR code viewed', ipAddress)
+
+      return NextResponse.json({
+        success: true,
+        qrCodeUrl: qrUrl,
         twoFASecret: user.twoFASecret,
         email: user.email
       });
-    } else {
-      return NextResponse.json({ error: "Invalid action" }, { status: 400 });
     }
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
   } catch (error) {
     console.error("Error in PATCH /admin/users:", error);
     return NextResponse.json({ error: "Failed to process action" }, { status: 500 });

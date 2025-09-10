@@ -12,7 +12,9 @@ interface AuditLogData {
 
 export async function logAuditEvent(data: AuditLogData) {
   try {
-    const response = await fetch('/api/audit-logs', {
+    // Use full URL for server-side fetch
+    const baseUrl = process.env.NEXTAUTH_URL || 'http://localhost:3000'
+    const response = await fetch(`${baseUrl}/api/audit-logs`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -149,6 +151,19 @@ export const auditLogger = {
       action: 'USER_SUSPENDED',
       resource: `User: ${targetEmail}`,
       details: 'User account suspended',
+      ipAddress,
+      severity: 'warning',
+      category: 'user_management'
+    })
+  },
+
+  userDeleted: (adminUser: string, adminEmail: string, targetUser: string, targetEmail: string, role: string, ipAddress?: string) => {
+    return logAuditEvent({
+      user: adminUser,
+      userEmail: adminEmail,
+      action: 'USER_DELETED',
+      resource: `User: ${targetEmail}`,
+      details: `User account deleted. Role was: ${role}`,
       ipAddress,
       severity: 'warning',
       category: 'user_management'

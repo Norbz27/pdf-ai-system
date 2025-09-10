@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {  User as UserIcon, Eye, EyeOff } from "lucide-react"
-import { 
+import {
   Table,
   TableBody,
   TableCell,
@@ -15,12 +15,12 @@ import {
   TableRow,
 } from "@/components/ui/table"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { 
-  Users, 
-  Plus, 
-  Search, 
-  Edit, 
-  UserX, 
+import {
+  Users,
+  Plus,
+  Search,
+  Edit,
+  UserX,
   MoreHorizontal,
   Mail,
   Calendar,
@@ -77,8 +77,8 @@ export default function UsersPage() {
   const [isInviteDialogOpen, setIsInviteDialogOpen] = useState(false)
   const [isEditDialogOpen, setIsEditDialogOpen] = useState(false)
   const [editingUser, setEditingUser] = useState<User | null>(null)
-const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
-const [newUser, setNewUser] = useState({
+  const [qrCodeUrl, setQrCodeUrl] = useState<string | null>(null);
+  const [newUser, setNewUser] = useState({
     name: "",
     email: "",
     role: "User",
@@ -89,6 +89,10 @@ const [newUser, setNewUser] = useState({
   const [showPassword, setShowPassword] = useState(false)
   const [qrCodeData, setQrCodeData] = useState<{url: string, secret: string, email: string} | null>(null)
   const [isQrDialogOpen, setIsQrDialogOpen] = useState(false)
+  const [isResetPasswordDialogOpen, setIsResetPasswordDialogOpen] = useState(false)
+  const [resetPasswordUser, setResetPasswordUser] = useState<User | null>(null)
+  const [newGeneratedPassword, setNewGeneratedPassword] = useState("")
+  const [showNewPassword, setShowNewPassword] = useState(false)
 
   // Password generator function
   function generatePassword(length = 12) {
@@ -111,6 +115,15 @@ const [newUser, setNewUser] = useState({
     }
   }, [isInviteDialogOpen])
 
+  // Generate new password for reset when dialog opens
+  useEffect(() => {
+    if (isResetPasswordDialogOpen && resetPasswordUser) {
+      const pwd = generatePassword()
+      setNewGeneratedPassword(pwd)
+      setShowNewPassword(true)
+    }
+  }, [isResetPasswordDialogOpen, resetPasswordUser])
+
   // Regenerate password
   const handleRegeneratePassword = () => {
     const pwd = generatePassword()
@@ -123,6 +136,16 @@ const [newUser, setNewUser] = useState({
   const handleCopyPassword = () => {
     navigator.clipboard.writeText(generatedPassword)
     toast({ title: "Copied", description: "Password copied to clipboard" })
+  }
+
+  // Copy new password to clipboard
+  const handleCopyNewPassword = () => {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(newGeneratedPassword)
+      toast({ title: "Copied", description: "New password copied to clipboard" })
+    } else {
+      toast({ title: "Error", description: "Clipboard API not supported", variant: "destructive" })
+    }
   }
 
   // Fetch users and roles on component mount
@@ -283,7 +306,7 @@ const [newUser, setNewUser] = useState({
   const handleToggleUserStatus = async (userId: string, currentStatus: string) => {
     try {
       const newStatus = currentStatus === 'active' ? 'suspended' : 'active'
-      
+
       const response = await fetch(`/api/admin/users/${userId}`, {
         method: 'PATCH',
         headers: {
@@ -342,14 +365,59 @@ const [newUser, setNewUser] = useState({
     }
   }
 
-  const handleResetPassword = async (userId: string) => {
+  const handleResetPassword = (user: User) => {
+    setResetPasswordUser(user)
+    setIsResetPasswordDialogOpen(true)
+  }
+
+  const handleConfirmResetPassword = async () => {
     try {
-      await axios.patch("/api/admin/users", { userId, action: "reset_password" });
-      toast({ title: "Password reset email sent." });
-    } catch (err) {
-      toast({ title: "Failed to reset password", variant: "destructive" });
+      if (!resetPasswordUser || !newGeneratedPassword) {
+        toast({
+          title: "Error",
+          description: "No user selected or password generated",
+          variant: "destructive"
+        })
+        return
+      }
+
+      const response = await fetch(`/api/admin/users`, {
+        method: 'PATCH',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: resetPasswordUser._id,
+          action: "reset_password",
+          newPassword: newGeneratedPassword
+        }),
+      })
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to reset password')
+      }
+
+      toast({
+        title: "Success",
+        description: `Password reset successfully for ${resetPasswordUser.name}. The new password has been set.`,
+      })
+
+      setIsResetPasswordDialogOpen(false)
+      setResetPasswordUser(null)
+      setNewGeneratedPassword("")
+      setShowNewPassword(false)
+    } catch (error) {
+      console.error('Error resetting password:', error)
+      toast({
+        title: "Error",
+        description: error instanceof Error ? error.message : "Failed to reset password",
+        variant: "destructive"
+      })
     }
-  };
+  }
+
   const handleResendVerification = async (userId: string) => {
     try {
       await axios.patch("/api/admin/users", { userId, action: "resend_verification" });
@@ -615,7 +683,7 @@ const [newUser, setNewUser] = useState({
                             <UserX className="h-4 w-4 mr-2" />
                             {user.status === "active" ? "Suspend" : "Activate"}
                           </DropdownMenuItem>
-                          <DropdownMenuItem onClick={() => handleResetPassword(user._id)}>
+                          <DropdownMenuItem onClick={() => handleResetPassword(user)}>
                             <UserIcon className="h-4 w-4 mr-2" />
                             Reset Password
                           </DropdownMenuItem>
@@ -715,6 +783,94 @@ const [newUser, setNewUser] = useState({
         </DialogContent>
       </Dialog>
 
+      {/* Reset Password Dialog */}
+      <Dialog open={isResetPasswordDialogOpen} onOpenChange={setIsResetPasswordDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reset Password</DialogTitle>
+            <DialogDescription>
+              Generate a new password for {resetPasswordUser?.name}. The user will need to use this new password to log in.
+            </DialogDescription>
+          </DialogHeader>
+          {resetPasswordUser && (
+            <div className="space-y-4">
+              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg">
+                <div className="flex items-center space-x-2">
+                  <UserIcon className="h-5 w-5 text-yellow-600" />
+                  <span className="font-medium text-yellow-800">User: {resetPasswordUser.name}</span>
+                </div>
+                <p className="text-sm text-yellow-700 mt-1">
+                  Email: {resetPasswordUser.email}
+                </p>
+              </div>
+
+              <div>
+                <Label htmlFor="new-password">New Password</Label>
+                <div className="flex gap-2 items-center">
+                  <div className="relative w-full">
+                    <Input
+                      id="new-password"
+                      type={showNewPassword ? "text" : "password"}
+                      value={newGeneratedPassword}
+                      readOnly
+                      style={{ fontFamily: 'monospace' }}
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      className="absolute right-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                      onClick={() => setShowNewPassword((v) => !v)}
+                      tabIndex={-1}
+                      aria-label={showNewPassword ? "Hide password" : "Show password"}
+                      style={{ background: 'none', border: 'none', padding: 0 }}
+                    >
+                      {showNewPassword ? (
+                        <EyeOff className="h-4 w-4 text-gray-400" />
+                      ) : (
+                        <Eye className="h-4 w-4 text-gray-400" />
+                      )}
+                    </button>
+                  </div>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => {
+                      const pwd = generatePassword()
+                      setNewGeneratedPassword(pwd)
+                      setShowNewPassword(true)
+                    }}
+                  >
+                    Regenerate
+                  </Button>
+                  <Button type="button" variant="outline" onClick={handleCopyNewPassword}>
+                    <Copy className="h-4 w-4" />
+                  </Button>
+                </div>
+                <p className="text-sm text-gray-500 mt-2">
+                  Make sure to copy this password before confirming. It cannot be retrieved later.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => {
+                setIsResetPasswordDialogOpen(false)
+                setResetPasswordUser(null)
+                setNewGeneratedPassword("")
+                setShowNewPassword(false)
+              }}
+            >
+              Cancel
+            </Button>
+            <Button onClick={handleConfirmResetPassword} disabled={!newGeneratedPassword}>
+              Reset Password
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* QR Code Dialog */}
       <Dialog open={isQrDialogOpen} onOpenChange={setIsQrDialogOpen}>
         <DialogContent className="sm:max-w-md">
@@ -727,9 +883,9 @@ const [newUser, setNewUser] = useState({
           <div className="space-y-4">
             {qrCodeData?.url && (
               <div className="flex justify-center">
-                <img 
-                  src={qrCodeData.url} 
-                  alt="2FA QR Code" 
+                <img
+                  src={qrCodeData.url}
+                  alt="2FA QR Code"
                   className="w-48 h-48 border rounded-lg"
                 />
               </div>

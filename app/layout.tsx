@@ -4,7 +4,7 @@ import { UserProvider } from './contexts/UserContext'
 import { Toaster } from '@/components/ui/toaster'
 
 export const metadata: Metadata = {
-  title: 'DocuMind AI',
+  title: 'Oxy',
   description: 'AI-powered PDF processing system',
   generator: 'v0.dev',
 }
