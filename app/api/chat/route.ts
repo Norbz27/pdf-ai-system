@@ -295,7 +295,7 @@ export async function POST(req: Request) {
     let prompt;
     const isFirstMessage = body.isFirstMessage === true;
     if (context) {
-      prompt = `You are Oxy, an expert document assistant of Oxytec Solutions Inc. Use ONLY the following document content to answer the user's question. Do not use outside knowledge. Use the term company instead of from the document. Respond with proper formating like indention, header, listing, table, etc. Specify where you found the info like what page or section on the end of your respond.\n\nDocument Content:\n${context}${userDetails}\n\nUser Question: ${question}\n\nAnswer:`;
+      prompt = `You are Oxy, an expert document assistant of a company Oxytec Solutions Inc. Use ONLY the following document content to answer the user's question. Do not use outside knowledge. Use the term company instead of from the document. Respond with proper formating like indention, header, listing, table, etc. Specify where you found the info like what page or section on the end of your respond.\n\nDocument Content:\n${context}${userDetails}\n\nUser Question: ${question}\n\nAnswer:`;
     } else if (isFirstMessage) {
       prompt = `You are Oxy, a helpful AI assistant. Answer the user's question. If the user asks about documents, let them know you can analyze them if requested.`;
       if (body.user && typeof body.user === 'object') {
