@@ -5,10 +5,8 @@ import nodemailer from 'nodemailer'
 import speakeasy from 'speakeasy'
 import qrcode from 'qrcode'
 import { auditLogger } from "@/lib/audit-logger"
-
-declare module 'nodemailer';
-declare module 'speakeasy';
-declare module 'qrcode';
+import { ObjectId } from 'mongodb'
+import { mkdirSync } from 'fs'
 
 // GET - Fetch all users
 export async function GET(req: NextRequest) {
@@ -57,7 +55,9 @@ export async function GET(req: NextRequest) {
       },
       {
         $project: {
-          roleInfo: 0
+          roleInfo: 0,
+          password: 0,
+          twoFASecret: 0
         }
       },
       { $sort: { createdAt: -1 } }
@@ -84,18 +84,21 @@ function generateRandomPassword(length = 12) {
 
 async function sendAccountEmail(email: string, password: string, qrImagePath: string, secret: string) {
   try {
-    // Check environment variables with fallbacks for development
-    const smtpHost = process.env.SMTP_HOST || 'oxytecsi.com';
-    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : 465;
-    const smtpUser = process.env.SMTP_USER || 'norbertojr@oxytecsi.com';
-    const smtpPass = process.env.SMTP_PASS || 'fOBd;&k+ueq*';
-    const smtpFrom = process.env.SMTP_FROM || smtpUser || 'norbertojr@oxytecsi.com';
+    // Require environment variables for SMTP; do not use insecure defaults
+    const smtpHost = process.env.SMTP_HOST;
+    const smtpPort = process.env.SMTP_PORT ? parseInt(process.env.SMTP_PORT) : undefined;
+    const smtpUser = process.env.SMTP_USER;
+    const smtpPass = process.env.SMTP_PASS;
+    const smtpFrom = process.env.SMTP_FROM || smtpUser;
 
-    // Log SMTP configuration (without sensitive data)
+    if (!smtpHost || !smtpPort || !smtpUser || !smtpPass || !smtpFrom) {
+      throw new Error('SMTP configuration is missing. Please set SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS, and SMTP_FROM environment variables.');
+    }
+
+    // Log non-sensitive SMTP configuration only
     console.log('SMTP Configuration:', {
       host: smtpHost,
       port: smtpPort,
-      user: smtpUser, // Log the SMTP user
       from: smtpFrom
     });
 
@@ -228,22 +231,8 @@ export async function POST(req: NextRequest) {
     // Hash password with bcrypt
     const hashedPassword = await bcrypt.hash(password, 10)
 
-    // Generate 2FA secret
+    // Generate 2FA secret (store base32)
     const twoFASecret = speakeasy.generateSecret({ name: `DocuMind AI (${email})` });
-    const qrUrl = twoFASecret.otpauth_url;
-
-    console.log('Generated 2FA secret:', twoFASecret.base32);
-    console.log('Generated QR URL:', qrUrl);
-
-    // Check if otpauth_url is defined before saving
-    if (!qrUrl) {
-      throw new Error("Failed to generate QR code URL");
-    }
-
-    // Generate QR code as a local image file
-    const qrImagePath = `public/uploads/${email}-qr.png`;
-    await qrcode.toFile(qrImagePath, qrUrl);
-    console.log('Generated QR code saved to:', qrImagePath);
 
     const newUser = {
       name,
@@ -259,7 +248,7 @@ export async function POST(req: NextRequest) {
       updatedAt: new Date().toISOString(),
       // Set default permissions based on role
       permissions: roleDoc.permissions || ["user_page_access"],
-      twoFASecret: twoFASecret.base32, // Store 2FA secret
+      twoFASecret: twoFASecret.base32, // Store 2FA secret (base32)
       passwordResetRequired: true // Require password reset on first login
     }
 
@@ -272,22 +261,53 @@ export async function POST(req: NextRequest) {
     )
 
     // Log user creation
-    const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+    const forwardedFor = req.headers.get('x-forwarded-for')
+    const ipAddress = forwardedFor ? forwardedFor.split(',')[0].trim() : (req.headers.get('x-real-ip') || 'unknown')
     await auditLogger.userCreated('Admin', 'admin@example.com', name, email, role, ipAddress)
 
-    // Try to send email, but don't fail user creation if it fails
+    // Try to generate QR code and send email, but don't fail user creation if it fails
     let emailError = null
     try {
+      // Ensure uploads directory exists
+      mkdirSync('public/uploads', { recursive: true })
+      // Build otpauth URL from stored base32 secret
+      const qrUrl = speakeasy.otpauthURL({
+        secret: twoFASecret.base32,
+        label: `DocuMind AI (${email})`,
+        issuer: 'DocuMind AI',
+        encoding: 'base32'
+      })
+      if (!qrUrl) {
+        throw new Error("Failed to generate QR code URL")
+      }
+      const qrImagePath = `public/uploads/${email}-qr.png`
+      await qrcode.toFile(qrImagePath, qrUrl)
       await sendAccountEmail(email, password, qrImagePath, twoFASecret.base32)
     } catch (err) {
-      console.error("Error sending account email:", err)
+      console.error("Error preparing or sending account email:", err)
       emailError = err instanceof Error ? err.message : String(err)
+    }
+
+    const safeUser = {
+      _id: result.insertedId,
+      name: newUser.name,
+      email: newUser.email,
+      roleId: newUser.roleId,
+      role: newUser.role,
+      status: newUser.status,
+      avatar: newUser.avatar,
+      lastLogin: newUser.lastLogin,
+      joinedDate: newUser.joinedDate,
+      createdAt: newUser.createdAt,
+      updatedAt: newUser.updatedAt,
+      permissions: newUser.permissions,
+      passwordResetRequired: newUser.passwordResetRequired
     }
 
     return NextResponse.json({
       success: true,
       userId: result.insertedId,
-      user: { ...newUser, _id: result.insertedId },
+      user: safeUser,
       emailError
     })
   } catch (error) {
@@ -309,7 +329,7 @@ export async function PATCH(req: NextRequest) {
     }
     const client = await clientPromise;
     const db = client.db("DocuMind_AI");
-    const user = await db.collection("users").findOne({ _id: new (require('mongodb').ObjectId)(userId) });
+    const user = await db.collection("users").findOne({ _id: new ObjectId(userId) });
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
@@ -322,7 +342,8 @@ export async function PATCH(req: NextRequest) {
       await db.collection("users").updateOne({ _id: user._id }, { $set: { password: hashedPassword } });
 
       // Log user update
-      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      const forwardedFor = req.headers.get('x-forwarded-for')
+      const ipAddress = forwardedFor ? forwardedFor.split(',')[0].trim() : (req.headers.get('x-real-ip') || 'unknown')
       await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'Password reset', ipAddress)
 
       // Removed email sending on password reset as per user request
@@ -330,17 +351,24 @@ export async function PATCH(req: NextRequest) {
     } else if (action === "resend_verification") {
       // Reuse last password (cannot send plain password, so generate a new one if needed)
       const password = "********"; // Hide password for security
-      const qrUrl = speakeasy.otpauthURL({ secret: user.twoFASecret, label: `DocuMind AI (${user.email})` });
+      const qrUrl = speakeasy.otpauthURL({
+        secret: user.twoFASecret,
+        label: `DocuMind AI (${user.email})`,
+        issuer: 'DocuMind AI',
+        encoding: 'base32'
+      });
       if (!qrUrl) {
         throw new Error("Failed to generate QR code URL");
       }
-      // Generate QR code as a local image file
+      // Ensure uploads directory exists and generate QR code as a local image file
+      mkdirSync('public/uploads', { recursive: true });
       const qrImagePath = `public/uploads/${user.email}-qr.png`;
       await qrcode.toFile(qrImagePath, qrUrl);
       await sendAccountEmail(user.email, password, qrImagePath, user.twoFASecret);
 
       // Log user update
-      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      const forwardedFor = req.headers.get('x-forwarded-for')
+      const ipAddress = forwardedFor ? forwardedFor.split(',')[0].trim() : (req.headers.get('x-real-ip') || 'unknown')
       await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'Verification email resent', ipAddress)
 
       return NextResponse.json({ success: true, message: "Verification email resent." });
@@ -351,17 +379,19 @@ export async function PATCH(req: NextRequest) {
       }
       const qrUrl = await qrcode.toDataURL(speakeasy.otpauthURL({
         secret: user.twoFASecret,
-        label: `DocuMind AI (${user.email})`
+        label: `DocuMind AI (${user.email})`,
+        issuer: 'DocuMind AI',
+        encoding: 'base32'
       }));
 
       // Log user update
-      const ipAddress = req.headers.get('x-forwarded-for') || req.headers.get('x-real-ip') || 'unknown'
+      const forwardedFor = req.headers.get('x-forwarded-for')
+      const ipAddress = forwardedFor ? forwardedFor.split(',')[0].trim() : (req.headers.get('x-real-ip') || 'unknown')
       await auditLogger.userUpdated('Admin', 'admin@example.com', user.name, user.email, 'QR code viewed', ipAddress)
 
       return NextResponse.json({
         success: true,
         qrCodeUrl: qrUrl,
-        twoFASecret: user.twoFASecret,
         email: user.email
       });
     }

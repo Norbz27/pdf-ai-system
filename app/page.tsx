@@ -30,6 +30,12 @@ export default function LandingPage() {
   const [showTwoFAModal, setShowTwoFAModal] = useState(false)
   const [showChangePasswordModal, setShowChangePasswordModal] = useState(false)
   const [pendingUser, setPendingUser] = useState<User | null>(null)
+  const [showForgotModal, setShowForgotModal] = useState(false)
+  const [forgotEmail, setForgotEmail] = useState("")
+  const [forgotLoading, setForgotLoading] = useState(false)
+  const [isForgotFlow, setIsForgotFlow] = useState(false)
+  const [forgotUser, setForgotUser] = useState<{ _id: string, email: string, name?: string } | null>(null)
+  const [forgotTwoFAToken, setForgotTwoFAToken] = useState<string | null>(null)
   const [blockRedirect, setBlockRedirect] = useState(false)
   const [modalDismissed, setModalDismissed] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -148,7 +154,22 @@ export default function LandingPage() {
     }
   }
 
-  const handleTwoFAVerification = () => {
+  const handleTwoFAVerification = (data?: { token?: string }) => {
+    // Forgot-password flow: after 2FA verification, allow password change
+    if (isForgotFlow) {
+      setShowTwoFAModal(false)
+      setShowChangePasswordModal(true)
+      setIsChangingPassword(true)
+      setBlockRedirect(true)
+      toast({
+        title: "2FA Verified",
+        description: "You may now change your password.",
+        variant: "success"
+      })
+      return
+    }
+
+    // Normal login flow
     if (!pendingUser) {
       toast({
         title: "Error",
@@ -222,6 +243,28 @@ export default function LandingPage() {
       localStorage.clear()
       router.replace('/')
     }
+    // If this was a forgot-password flow, reset state
+    if (isForgotFlow) {
+      setIsForgotFlow(false)
+      setForgotUser(null)
+      setForgotTwoFAToken(null)
+    }
+  }
+
+  const handleForgotPasswordChanged = () => {
+    // Password changed during forgot-password flow
+    toast({
+      title: "Password Changed",
+      description: "Your password has been updated. Please sign in with your new password.",
+      variant: "success"
+    })
+    setShowChangePasswordModal(false)
+    setIsChangingPassword(false)
+    setBlockRedirect(false)
+    setIsForgotFlow(false)
+    setForgotUser(null)
+    setForgotTwoFAToken(null)
+    setShowForgotModal(false)
   }
 
   // Handle redirects in useEffect instead of render
@@ -475,6 +518,63 @@ export default function LandingPage() {
     setShowPassword(!showPassword)
   }
 
+  const handleForgotPasswordInitiate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!forgotEmail.trim()) {
+      toast({
+        title: "Email Required",
+        description: "Please enter your email address.",
+        variant: "warning"
+      })
+      return
+    }
+    try {
+      setForgotLoading(true)
+      const res = await fetch('/api/auth/forgot-password/initiate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: forgotEmail.trim() })
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to initiate password reset')
+      }
+
+      setForgotUser({ _id: data.user._id, email: data.user.email, name: data.user.name })
+      setIsForgotFlow(true)
+      setShowForgotModal(false)
+
+      if (data.twoFAEnabled) {
+        setForgotTwoFAToken(data.token)
+        setShowTwoFAModal(true)
+        toast({
+          title: "2FA Required",
+          description: "Enter your 2FA code to continue.",
+          variant: "info"
+        })
+      } else {
+        // No 2FA; allow direct password change
+        setShowChangePasswordModal(true)
+        setIsChangingPassword(true)
+        setBlockRedirect(true)
+        toast({
+          title: "Proceed",
+          description: "You may now change your password.",
+          variant: "info"
+        })
+      }
+    } catch (err) {
+      console.error('Forgot password initiate error:', err)
+      toast({
+        title: "Request Failed",
+        description: err instanceof Error ? err.message : 'Unable to process request',
+        variant: "destructive"
+      })
+    } finally {
+      setForgotLoading(false)
+    }
+  }
+
   return (
     <div className="min-h-screen from-blue-50 to-indigo-100 flex items-center justify-center px-4">
       <div className="mt-[-100px] w-[320px] space-y-8">
@@ -537,9 +637,9 @@ export default function LandingPage() {
           <div className="space-y-2">
           </div>
                       <div className="text-center">
-            <a href="#" className="text-sm text-gray-500 hover:text-gray-700 hover:underline">
+            <button type="button" onClick={() => setShowForgotModal(true)} className="text-sm text-gray-500 hover:text-gray-700 hover:underline">
               Forgot your password?
-            </a>
+            </button>
 
           </div>
           </form>
@@ -551,18 +651,50 @@ export default function LandingPage() {
         open={showTwoFAModal}
         onClose={() => setShowTwoFAModal(false)}
         onVerify={handleTwoFAVerification}
+        forgotToken={isForgotFlow ? (forgotTwoFAToken || undefined) : undefined}
       />
 
       {/* Change Password Modal */}
-        {(user || pendingUser) && (
+        {(user || pendingUser || forgotUser) && (
         <ChangePasswordModal
           isOpen={showChangePasswordModal}
           onClose={handlePasswordModalClose}
-          onPasswordChanged={handlePasswordChanged}
-          userId={pendingUser?._id || (user as User | null)?._id || ''}
-          email={pendingUser?.email || (user as User | null)?.email || ''}
+          onPasswordChanged={isForgotFlow ? handleForgotPasswordChanged : handlePasswordChanged}
+          userId={forgotUser?._id || pendingUser?._id || (user as User | null)?._id || ''}
+          email={forgotUser?.email || pendingUser?.email || (user as User | null)?.email || ''}
         />
       )}
+
+      {/* Forgot Password Modal */}
+      <Dialog open={showForgotModal} onOpenChange={setShowForgotModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Forgot Password</DialogTitle>
+            <DialogDescription>
+              Enter your account email. If 2FA is enabled, you will need to verify before changing your password.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleForgotPasswordInitiate} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="forgotEmail">Email</Label>
+              <Input
+                id="forgotEmail"
+                type="email"
+                placeholder="name@example.com"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                disabled={forgotLoading}
+              />
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button type="button" variant="outline" onClick={() => setShowForgotModal(false)} disabled={forgotLoading}>Cancel</Button>
+              <Button type="submit" disabled={forgotLoading || !forgotEmail.trim()}>
+                {forgotLoading ? 'Processing...' : 'Continue'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -7,10 +7,13 @@ import { useToast } from "@/hooks/use-toast";
 interface TwoFAModalProps {
   open: boolean;
   onClose: () => void;
-  onVerify: () => void;
+  // onVerify can optionally receive a token when used in forgot-password flow
+  onVerify: (data?: { token?: string }) => void;
+  // Optional token for forgot-password flow; when provided, verification uses the forgot-password endpoint
+  forgotToken?: string;
 }
 
-const TwoFAModal = ({ open, onClose, onVerify }: TwoFAModalProps) => {
+const TwoFAModal = ({ open, onClose, onVerify, forgotToken }: TwoFAModalProps) => {
   const [code, setCode] = useState("");
   const { toast } = useToast();
 
@@ -24,41 +27,61 @@ const TwoFAModal = ({ open, onClose, onVerify }: TwoFAModalProps) => {
       return;
     }
 
-    // Get the JWT token from localStorage
-    const token = localStorage.getItem('authToken');
-    
-    if (!token) {
-      toast({
-        title: "Authentication Error",
-        description: "Please log in again.",
-        variant: "destructive",
-      });
-      return;
-    }
+    let response: Response;
+    try {
+      if (forgotToken) {
+        // Forgot-password 2FA verification (no auth header)
+        response = await fetch('/api/auth/forgot-password/verify-2fa', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ token: forgotToken, code }),
+        });
+      } else {
+        // Normal login 2FA verification (requires auth token)
+        const token = localStorage.getItem('authToken');
+        if (!token) {
+          toast({
+            title: "Authentication Error",
+            description: "Please log in again.",
+            variant: "destructive",
+          });
+          return;
+        }
+        response = await fetch('/api/auth/verify/2fa', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({ code }),
+        });
+      }
 
-    const response = await fetch('/api/auth/verify/2fa', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`,
-      },
-      body: JSON.stringify({ code }),
-    });
+      const data = await response.json();
 
-    const data = await response.json();
-
-    if (response.ok) {
-      onVerify();
+      if (response.ok) {
+        // Pass token back for forgot-password flow, otherwise nothing
+        onVerify(data?.token ? { token: data.token } : undefined);
+        toast({
+          title: "Success",
+          description: "2FA verification successful!",
+          variant: "success",
+        });
+        onClose();
+      } else {
+        toast({
+          title: "Verification Failed",
+          description: data.error || "Invalid 2FA code.",
+          variant: "destructive",
+        });
+      }
+    } catch (err) {
+      console.error('2FA verification error:', err);
       toast({
-        title: "Success",
-        description: "2FA verification successful!",
-        variant: "success",
-      });
-      onClose();
-    } else {
-      toast({
-        title: "Verification Failed",
-        description: data.error || "Invalid 2FA code.",
+        title: "Verification Error",
+        description: "An error occurred during verification.",
         variant: "destructive",
       });
     }
@@ -70,7 +93,7 @@ const TwoFAModal = ({ open, onClose, onVerify }: TwoFAModalProps) => {
         <DialogHeader>
           <DialogTitle>Two-Factor Authentication</DialogTitle>
           <DialogDescription>
-            Please enter the 2FA code sent to your authenticator app.
+            Please enter the 2FA code from your authenticator app.
           </DialogDescription>
         </DialogHeader>
         <Input
@@ -79,8 +102,10 @@ const TwoFAModal = ({ open, onClose, onVerify }: TwoFAModalProps) => {
           value={code}
           onChange={(e) => setCode(e.target.value)}
         />
-        <Button onClick={handleVerify}>Verify</Button>
-        <Button variant="outline" onClick={onClose}>Cancel</Button>
+        <div className="flex gap-2 justify-end">
+          <Button variant="outline" onClick={onClose}>Cancel</Button>
+          <Button onClick={handleVerify}>Verify</Button>
+        </div>
       </DialogContent>
     </Dialog>
   );
