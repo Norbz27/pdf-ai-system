@@ -6,6 +6,38 @@ const CHUNKS_PER_DOC = 1; // Limit to 1 top chunk per doc for testing speed
 
 type Chunk = { text: string; chunkIndex: number; doc?: any; score?: number; embedding?: number[] };
 
+const OLLAMA_URL = process.env.OLLAMA_URL || "http://localhost:11434";
+const OLLAMA_MODEL = process.env.OLLAMA_MODEL || "llama3.2:3b";
+
+// Network hardening
+const EMBED_TIMEOUT_MS = 20000; // 20s for embedding calls
+const GENERATE_TIMEOUT_MS = 60000; // 60s for generation
+const MAX_SEMANTIC_CHUNKS = 100; // cap semantic ranking set size
+
+// Minimal doc typing (avoid DOM Document name collision)
+interface DocRecord {
+  _id: ObjectId;
+  name?: string;
+  originalname?: string;
+  filename?: string;
+  title?: string;
+  chunks?: Chunk[];
+  uploadedBy?: ObjectId | string;
+  sharedWith?: (ObjectId | string)[];
+}
+
+// Abortable fetch with timeout
+async function fetchWithTimeout(resource: string, options: RequestInit = {}, timeoutMs = 30000) {
+  const controller = new AbortController();
+  const id = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const res = await fetch(resource, { ...options, signal: controller.signal });
+    return res;
+  } finally {
+    clearTimeout(id);
+  }
+}
+
 function getRelevantChunksKeyword(chunks: Chunk[], question: string): Chunk[] {
   // Simple keyword search: rank by number of question words present
   const keywords = question.toLowerCase().split(/\W+/).filter(Boolean);
@@ -29,28 +61,29 @@ function cosineSimilarity(a: number[], b: number[]): number {
 }
 
 async function getEmbedding(text: string): Promise<number[]> {
-  // Use fast embedding model for semantic search
-  const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-  const res = await fetch(`${ollamaUrl}/api/embeddings`, {
+  const ollamaUrl = OLLAMA_URL;
+  const res = await fetchWithTimeout(`${ollamaUrl}/api/embeddings`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ model: "nomic-embed-text", prompt: text })
-  });
-  if (!res.ok) throw new Error("Embedding API error");
+  }, EMBED_TIMEOUT_MS);
+  if (!res.ok) {
+    const errText = await res.text().catch(() => "");
+    throw new Error(`Embedding API error: ${res.status} ${errText}`);
+  }
   const data = await res.json();
   return data.embedding || [];
 }
 
 async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
-  // Try batch embedding (if supported by Ollama)
-  const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
+  const ollamaUrl = OLLAMA_URL;
   if (texts.length > 1) {
     try {
-      const res = await fetch(`${ollamaUrl}/api/embeddings`, {
+      const res = await fetchWithTimeout(`${ollamaUrl}/api/embeddings`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model: "nomic-embed-text", prompt: texts })
-      });
+      }, EMBED_TIMEOUT_MS);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.embeddings)) return data.embeddings;
@@ -58,23 +91,22 @@ async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
         if (data.embedding) return [data.embedding];
         throw new Error("No embeddings returned from Ollama");
       } else {
-        const errText = await res.text();
+        const errText = await res.text().catch(() => "");
         console.warn("Ollama batch embedding not supported, falling back to sequential.", errText);
       }
     } catch (err) {
       console.warn("Batch embedding failed, falling back to sequential.", err);
     }
   }
-  // Fallback: sequential embedding
   const results: number[][] = [];
   for (const text of texts) {
-    const res = await fetch(`${ollamaUrl}/api/embeddings`, {
+    const res = await fetchWithTimeout(`${ollamaUrl}/api/embeddings`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ model: "nomic-embed-text", prompt: text })
-    });
+    }, EMBED_TIMEOUT_MS);
     if (!res.ok) {
-      const errText = await res.text();
+      const errText = await res.text().catch(() => "");
       console.error(`Ollama embedding error (${res.status}):`, errText);
       throw new Error(`Embedding API error: ${res.status} - ${errText}`);
     }
@@ -86,56 +118,17 @@ async function getEmbeddingsBatch(texts: string[]): Promise<number[][]> {
   return results;
 }
 
-async function getRelevantChunks(chunks: Chunk[], question: string): Promise<Chunk[]> {
-  // Semantic search: embed question, compare to chunk embeddings
-  const queryEmbedding = await getEmbedding(question);
 
-  // Find chunks missing embeddings
-  const chunksMissingEmbeddings = chunks.filter(chunk => !chunk.embedding || !Array.isArray(chunk.embedding));
-  if (chunksMissingEmbeddings.length > 0) {
-    // Batch embedding API call for missing chunk embeddings
-    const batchTexts = chunksMissingEmbeddings.map(chunk => chunk.text);
-    const batchEmbeddings = await getEmbeddingsBatch(batchTexts);
-    chunksMissingEmbeddings.forEach((chunk, idx) => {
-      chunk.embedding = batchEmbeddings[idx];
-    });
-  }
-
-  // Only rank chunks with embeddings
-  return chunks
-    .filter(chunk => chunk.embedding && Array.isArray(chunk.embedding))
-    .map((chunk: Chunk) => {
-      let score = cosineSimilarity(queryEmbedding, chunk.embedding!);
-      return { ...chunk, score };
-    })
-    .sort((a: Chunk, b: Chunk) => (b.score || 0) - (a.score || 0));
-}
-
-// --- Add session-aware greeting logic ---
-// Helper: get session greeting for user
-async function getSessionGreeting(user: any) {
-  const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-  const ollamaModel = process.env.OLLAMA_MODEL || "llama3.2:3b";
-  const name = user?.name || "User";
-  const email = user?.email || "Unknown";
-  const role = user?.role || "Unknown";
-  const prompt = `Greet the user by name and introduce yourself as their AI assistant. Mention you can help with their uploaded documents, generate summaries, and answer questions. Personalize the greeting for: Name: ${name}, Email: ${email}, Role: ${role}.`;
-  const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model: ollamaModel, prompt, stream: false })
-  });
-  if (!ollamaRes.ok) {
-    return `Hello ${name}! I'm your AI assistant. How can I help you today?`;
-  }
-  const ollamaData = await ollamaRes.json();
-  return ollamaData.response || `Hello ${name}! I'm your AI assistant. How can I help you today?`;
-}
 
 export async function POST(req: Request) {
   try {
     const body = await req.json();
     const { docIds, question, cachedDocs } = body;
+    const userIdStr = body?.user?._id;
+    let userObjectId: ObjectId | null = null;
+    if (userIdStr && ObjectId.isValid(userIdStr)) {
+      userObjectId = new ObjectId(userIdStr);
+    }
     if (!question) {
       return new Response(JSON.stringify({ message: "Missing question" }), { status: 400 });
     }
@@ -150,15 +143,32 @@ export async function POST(req: Request) {
       const dbStart = Date.now();
       const client = await clientPromise;
       const db = client.db("DocuMind_AI");
+      const accessFilter = userObjectId
+        ? { $or: [{ uploadedBy: userObjectId }, { sharedWith: { $in: [userObjectId] } }] }
+        : {};
       if (docIds && Array.isArray(docIds) && docIds.length > 0) {
-        docs = await db.collection("documents").find({ _id: { $in: docIds.map((id: string) => typeof id === 'string' ? new ObjectId(id) : id) } }).toArray();
+        const idFilter = {
+          _id: {
+            $in: docIds.filter((id: string) => typeof id === 'string' && ObjectId.isValid(id)).map((id: string) => new ObjectId(id))
+          }
+        };
+        docs = await db.collection("documents").find({ ...idFilter, ...accessFilter }).toArray();
       } else {
-        docs = await db.collection("documents").find({}).toArray();
+        docs = await db.collection("documents").find(accessFilter).toArray();
       }
       const dbEnd = Date.now();
       console.log("DB fetch time (ms):", dbEnd - dbStart);
     } else {
-      docs = cachedDocs;
+      // Use cached docs but enforce access control
+      if (userObjectId) {
+        docs = (cachedDocs || []).filter((doc: any) => {
+          const uploadedByMatch = doc.uploadedBy?.toString?.() === userIdStr;
+          const sharedMatch = Array.isArray(doc.sharedWith) && doc.sharedWith.some((id: any) => id?.toString?.() === userIdStr);
+          return uploadedByMatch || sharedMatch;
+        });
+      } else {
+        docs = [];
+      }
     }
     
     // Special command: list documents (natural language intent detection)
@@ -181,12 +191,89 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ answer }), { status: 200 });
     }
     
-    // Handle generic greetings without sending document context to Ollama
+    // Ensure embeddings exist for chunks (batch first, then sequential fallback)
+async function ensureEmbeddings(chunks: Chunk[]) {
+  const missing = chunks.filter(c => !Array.isArray(c.embedding) || c.embedding.length === 0);
+  if (missing.length === 0) return;
+  const texts = missing.map(c => c.text);
+  const embeddings = await getEmbeddingsBatch(texts);
+  missing.forEach((chunk, idx) => {
+    chunk.embedding = embeddings[idx];
+  });
+}
+
+function buildSelectedChunks(ranked: Chunk[]): Chunk[] {
+  const docChunkMap: { [key: string]: number } = {};
+  const selected: Chunk[] = [];
+  let totalLength = 0;
+  for (const chunk of ranked) {
+    const docId = chunk.doc?._id?.toString?.() || "unknown";
+    docChunkMap[docId] = docChunkMap[docId] || 0;
+    if (docChunkMap[docId] < CHUNKS_PER_DOC) {
+      if (totalLength + chunk.text.length > MAX_CONTEXT_LENGTH) break;
+      selected.push(chunk);
+      docChunkMap[docId]++;
+      totalLength += chunk.text.length;
+    }
+  }
+  return selected;
+}
+
+async function selectRelevantChunks(docs: DocRecord[], question: string): Promise<Chunk[]> {
+  try {
+    const normalizedQuestion = question.trim().toLowerCase();
+    const allChunks: Chunk[] = docs.flatMap((doc: any) => (doc.chunks || []).map((chunk: any) => ({ ...chunk, doc })));
+    const matchedDocs = docs.filter((doc: any) => {
+      const docName = (doc.name || doc.originalname || doc.filename || doc.title || "Untitled Document").toLowerCase();
+      return normalizedQuestion.includes(docName);
+    });
+    const candidateChunks = (matchedDocs.length > 0)
+      ? allChunks.filter(c => matchedDocs.some(d => d._id?.toString?.() === c.doc?._id?.toString?.()))
+      : allChunks;
+
+    if (candidateChunks.length === 0) return [];
+
+    // Limit for semantic processing
+    const limited = candidateChunks.length > MAX_SEMANTIC_CHUNKS ? candidateChunks.slice(0, MAX_SEMANTIC_CHUNKS) : candidateChunks;
+
+    // Try semantic ranking
+    const chunksWithEmbeds = limited.filter(c => Array.isArray(c.embedding) && c.embedding.length > 0);
+    if (chunksWithEmbeds.length === limited.length) {
+      const queryEmbedding = await getEmbedding(question);
+      const ranked = limited
+        .map(c => ({ ...c, score: cosineSimilarity(queryEmbedding, c.embedding!) }))
+        .sort((a, b) => (b.score || 0) - (a.score || 0));
+      return buildSelectedChunks(ranked);
+    }
+
+    // Embed missing and rank
+    await ensureEmbeddings(limited);
+    const queryEmbedding = await getEmbedding(question);
+    const ranked = limited
+      .filter(c => Array.isArray(c.embedding) && c.embedding.length > 0)
+      .map(c => ({ ...c, score: cosineSimilarity(queryEmbedding, c.embedding!) }))
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+
+    if (ranked.length > 0) return buildSelectedChunks(ranked);
+
+    // Fallback: keyword
+    const keywordRanked = getRelevantChunksKeyword(limited, question);
+    return buildSelectedChunks(keywordRanked);
+  } catch (err) {
+    console.warn("Semantic selection failed, using keyword fallback:", err);
+    // Fallback: keyword on all docs
+    const allChunks: Chunk[] = docs.flatMap((doc: any) => (doc.chunks || []).map((chunk: any) => ({ ...chunk, doc })));
+    const keywordRanked = getRelevantChunksKeyword(allChunks, question);
+    return buildSelectedChunks(keywordRanked);
+  }
+}
+
+// Handle generic greetings without sending document context to Ollama
     const greetings = ["hello", "hi", "hey", "good morning", "good afternoon", "good evening", "__greeting__"];
     if (greetings.some(greet => normalizedQuestion === greet)) {
       // Use Ollama to generate a dynamic greeting response with the same model as document Q&A
-      const ollamaUrl = process.env.OLLAMA_URL || "http://localhost:11434";
-      const ollamaModel = process.env.OLLAMA_MODEL || "llama3.2:3b";
+      const ollamaUrl = OLLAMA_URL;
+      const ollamaModel = OLLAMA_MODEL;
       let prompt;
       if (normalizedQuestion === "__greeting__" && body.user) {
         prompt = `Greet the user by name and introduce yourself as Oxy, their AI assistant. Mention you can help with their uploaded documents, generate summaries, and answer questions. Personalize the greeting for: Name: ${body.user.name || "User"}, Role: ${body.user.role || "Unknown"}.  Be concise`;
@@ -194,15 +281,11 @@ export async function POST(req: Request) {
         prompt = `You are Oxy, a friendly AI assistant. Greet the user and offer help. Be concise.`;
       }
       const startOllama = Date.now();
-      const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
+      const ollamaRes = await fetchWithTimeout(`${ollamaUrl}/api/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: ollamaModel,
-          prompt: prompt,
-          stream: false
-        })
-      });
+        body: JSON.stringify({ model: ollamaModel, prompt, stream: false })
+      }, GENERATE_TIMEOUT_MS);
       const endOllama = Date.now();
       console.log("Ollama API response time (ms):", endOllama - startOllama);
       if (!ollamaRes.ok) {
@@ -214,80 +297,10 @@ export async function POST(req: Request) {
       return new Response(JSON.stringify({ answer }), { status: 200 });
     }
     
-    // --- Document matching and chunk retrieval for every question ---
-    let selectedChunks: Chunk[] = [];
-    let context = "";
+    // --- Document matching and chunk retrieval (refactored) ---
     let userDetails = "";
-    // Gather all document chunks
-    let allChunks: Chunk[] = docs.flatMap((doc: any) => (doc.chunks || []).map((chunk: any) => ({ ...chunk, doc })));
-    // Step 1: Match document names
-    const matchedDocs = docs.filter((doc: any) => {
-      const docName = (doc.name || doc.originalname || doc.filename || doc.title || "Untitled Document").toLowerCase();
-      return normalizedQuestion.includes(docName);
-    });
-    let relevantChunks: Chunk[] = [];
-    if (matchedDocs.length > 0) {
-      // Step 2: For matched docs, search their chunks for question matches
-      const matchedDocIds = matchedDocs.map((doc: any) => doc._id.toString());
-      const matchedDocChunks = allChunks.filter(chunk => matchedDocIds.includes(chunk.doc._id.toString()));
-      // Step 3: Semantic search and keyword search on chunks
-      const chunksWithEmbeddings = matchedDocChunks.filter(chunk => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
-      if (chunksWithEmbeddings.length > 0) {
-        // Limit to top 100 chunks for semantic search
-        const limitedChunks = chunksWithEmbeddings.length > 100 ? chunksWithEmbeddings.slice(0, 100) : chunksWithEmbeddings;
-        // Only embed missing chunk embeddings (should be rare)
-        const missingEmbeddings = limitedChunks.filter(chunk => !chunk.embedding || !Array.isArray(chunk.embedding));
-        if (missingEmbeddings.length > 0) {
-          const batchTexts = missingEmbeddings.map(chunk => chunk.text);
-          const batchEmbeddings = await getEmbeddingsBatch(batchTexts);
-          missingEmbeddings.forEach((chunk, idx) => {
-            chunk.embedding = batchEmbeddings[idx];
-          });
-        }
-        // Embed question once
-        const queryEmbedding = await getEmbedding(question);
-        // Score and sort
-        relevantChunks = limitedChunks.map(chunk => ({ ...chunk, score: cosineSimilarity(queryEmbedding, chunk.embedding!) }))
-          .sort((a, b) => (b.score || 0) - (a.score || 0));
-      } else {
-        // Fallback: keyword search if no embeddings
-        relevantChunks = getRelevantChunksKeyword(matchedDocChunks, question);
-      }
-    } else {
-      // If no document name matches, search all chunks for relevance
-      const chunksWithEmbeddings = allChunks.filter(chunk => Array.isArray(chunk.embedding) && chunk.embedding.length > 0);
-      if (chunksWithEmbeddings.length > 0) {
-        const limitedChunks = chunksWithEmbeddings.length > 100 ? chunksWithEmbeddings.slice(0, 100) : chunksWithEmbeddings;
-        const missingEmbeddings = limitedChunks.filter(chunk => !chunk.embedding || !Array.isArray(chunk.embedding));
-        if (missingEmbeddings.length > 0) {
-          const batchTexts = missingEmbeddings.map(chunk => chunk.text);
-          const batchEmbeddings = await getEmbeddingsBatch(batchTexts);
-          missingEmbeddings.forEach((chunk, idx) => {
-            chunk.embedding = batchEmbeddings[idx];
-          });
-        }
-        const queryEmbedding = await getEmbedding(question);
-        relevantChunks = limitedChunks.map(chunk => ({ ...chunk, score: cosineSimilarity(queryEmbedding, chunk.embedding!) }))
-          .sort((a, b) => (b.score || 0) - (a.score || 0));
-      } else {
-        relevantChunks = getRelevantChunksKeyword(allChunks, question);
-      }
-    }
-    // Select top chunks for context (limit by doc, then by total length)
-    const docChunkMap: { [key: string]: number } = {};
-    let totalLength = 0;
-    for (const chunk of relevantChunks) {
-      const docId = chunk.doc._id.toString();
-      docChunkMap[docId] = docChunkMap[docId] || 0;
-      // Limit to CHUNKS_PER_DOC per document
-      if (docChunkMap[docId] < CHUNKS_PER_DOC) {
-        if (totalLength + chunk.text.length > MAX_CONTEXT_LENGTH) break;
-        selectedChunks.push(chunk);
-        docChunkMap[docId]++;
-        totalLength += chunk.text.length;
-      }
-    }
-    context = selectedChunks.map(chunk => chunk.text).join("\n\n").slice(0, MAX_CONTEXT_LENGTH);
+    const selectedChunks: Chunk[] = await selectRelevantChunks((docs as DocRecord[]), question);
+    let context = selectedChunks.map(chunk => chunk.text).join("\n\n").slice(0, MAX_CONTEXT_LENGTH);
     if (body.user && typeof body.user === 'object') {
       userDetails = `\n\nUser Info:\nName: ${body.user.name || "Unknown"}\nEmail: ${body.user.email || "Unknown"}\nRole: ${body.user.role || "Unknown"}`;
     }
@@ -306,21 +319,17 @@ export async function POST(req: Request) {
       // For subsequent messages, just send the user's question
       prompt = question;
     }
-    console.log("Prompt sent to Ollama:\n", prompt);
+    console.debug("Ollama prompt length:", prompt.length);
 
     // Call Ollama API directly
-    const ollamaUrl = process.env.OLLAMA_URL;
-    const ollamaModel = process.env.OLLAMA_MODEL;
+    const ollamaUrl = OLLAMA_URL;
+    const ollamaModel = OLLAMA_MODEL;
     const startOllama = Date.now();
-    const ollamaRes = await fetch(`${ollamaUrl}/api/generate`, {
+    const ollamaRes = await fetchWithTimeout(`${ollamaUrl}/api/generate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: ollamaModel,
-        prompt: prompt,
-        stream: false
-      })
-    });
+      body: JSON.stringify({ model: ollamaModel, prompt, stream: false })
+    }, GENERATE_TIMEOUT_MS);
     const endOllama = Date.now();
     console.log("Ollama API response time (ms):", endOllama - startOllama);
     if (!ollamaRes.ok) {

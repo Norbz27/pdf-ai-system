@@ -313,7 +313,7 @@ export default function ChatPage() {
           <div className="flex items-center justify-between px-6 py-4">
             <div className="flex items-center space-x-3">
               <div className="w-8 h-8 rounded-full bg-gray-100 flex items-center justify-center">
-                <Bot className="w-5 h-5 text-gray-600" />
+                <img src="/logo/OXY_gray.png" alt="OXY Logo" className="w-6 h-6 text-gray-600" />
               </div>
               <div>
                 <h1 className="text-lg font-semibold text-gray-900">AI Assistant</h1>
@@ -342,7 +342,7 @@ export default function ChatPage() {
                 {messages.length === 0 && (
                   <div className="flex flex-col items-center justify-center h-full px-6 py-20">
                     <div className="w-16 h-16 rounded-full bg-gray-100 flex items-center justify-center mb-6">
-                      <Bot className="w-8 h-8 text-gray-600" />
+                      <img src="/logo/OXY_gray.png" alt="OXY Logo" className="w-9 h-9 text-gray-600" />
                     </div>
                     <h2 className="text-2xl font-semibold text-gray-900 mb-2">How can I help you today?</h2>
                     <p className="text-gray-500 text-center mb-8">I can help you analyze documents, answer questions, and assist with various tasks.</p>
@@ -376,7 +376,7 @@ export default function ChatPage() {
                                 </AvatarFallback>
                               ) : (
                                 <AvatarFallback className="bg-gray-100">
-                                  <Bot className="h-4 w-4 text-gray-600" />
+                                  <img src="/logo/OXY_gray.png" alt="OXY Logo" className="w-5 h-5 text-gray-600" />
                                 </AvatarFallback>
                               )}
                             </Avatar>
