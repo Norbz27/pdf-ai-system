@@ -91,7 +91,7 @@ export async function POST(req: NextRequest) {
     // Generate unique filename
     const timestamp = Date.now()
     const originalName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_')
-    const fileName = `${timestamp}_${originalName}`
+    const fileName = originalName
     const filePath = join(uploadsDir, fileName)
 
     // Convert file to buffer and save
@@ -124,8 +124,8 @@ export async function POST(req: NextRequest) {
       size: `${sizeInMB} MB`,
       pages: pageCount,
       chunks,
-      status: "processing",
-      filePath: `/uploads/${fileName}`,
+      status: "processed",
+      filePath: `public/uploads/${fileName}`,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString()
     }
@@ -136,7 +136,7 @@ export async function POST(req: NextRequest) {
       success: true,
       documentId: result.insertedId,
       document: { ...newDocument, _id: result.insertedId },
-      filePath: `/uploads/${fileName}`
+      filePath: `public/uploads/${fileName}`
     })
   } catch (error) {
     console.error("Error uploading document:", error)

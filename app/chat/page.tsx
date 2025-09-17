@@ -126,10 +126,14 @@ export default function ChatPage() {
   }, [])
 
   useEffect(() => {
-    // Fetch available documents from backend
+    if (!user) {
+      setAvailableDocuments([]);
+      return;
+    }
+    // Fetch available documents from backend filtered by user
     const fetchDocuments = async () => {
       try {
-        const res = await fetch("/api/documents");
+        const res = await fetch(`/api/documents?userId=${user._id}&userRole=${user.role}`);
         if (!res.ok) throw new Error("Failed to fetch documents");
         const data = await res.json();
         setAvailableDocuments(data.documents || []);
@@ -138,7 +142,7 @@ export default function ChatPage() {
       }
     };
     fetchDocuments();
-  }, []);
+  }, [user]);
 
 
 

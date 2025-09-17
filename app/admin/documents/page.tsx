@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
-import { 
+import {
   Table,
   TableBody,
   TableCell,
@@ -13,12 +13,12 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import { 
-  FileText, 
-  Upload, 
-  Search, 
-  Eye, 
-  Trash2, 
+import {
+  FileText,
+  Upload,
+  Search,
+  Eye,
+  Trash2,
   RefreshCw,
   MoreHorizontal,
   Filter,
@@ -38,6 +38,7 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
+  DialogClose,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
@@ -85,6 +86,7 @@ export default function DocumentsPage() {
     categoryId: "",
     uploadedBy: ""
   })
+  const [viewingDoc, setViewingDoc] = useState<any | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -231,7 +233,10 @@ export default function DocumentsPage() {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ status: 'processing' }),
+        body: JSON.stringify({
+          status: 'processing',
+          reprocess: true
+        }),
       })
 
       const data = await response.json()
@@ -510,7 +515,19 @@ export default function DocumentsPage() {
                           </Button>
                         </DropdownMenuTrigger>
                         <DropdownMenuContent align="end">
-                          <DropdownMenuItem>
+                          <DropdownMenuItem
+                            onClick={() => {
+                              if (doc.filePath) {
+                                setViewingDoc(doc)
+                              } else {
+                                toast({
+                                  title: "File Not Available",
+                                  description: "No file path available for this document",
+                                  variant: "destructive"
+                                });
+                              }
+                            }}
+                          >
                             <Eye className="h-4 w-4 mr-2" />
                             View
                           </DropdownMenuItem>
@@ -557,6 +574,30 @@ export default function DocumentsPage() {
           )}
         </CardContent>
       </Card>
+
+      <Dialog open={!!viewingDoc} onOpenChange={(open) => !open && setViewingDoc(null)}>
+        <DialogContent className="max-w-3xl w-full">
+          <DialogHeader>
+            <DialogTitle>View Document: {viewingDoc?.name}</DialogTitle>
+          </DialogHeader>
+          {viewingDoc?.filePath ? (
+            <div style={{ width: '100%', height: '70vh' }}>
+              <iframe
+                src={`/pdfjs/web/viewer.html?file=/uploads/${encodeURIComponent(viewingDoc.name)}#view=page&sidebar=0`}
+                title={viewingDoc.name}
+                width="100%"
+                height="100%"
+                style={{ border: 'none' }}
+              />
+            </div>
+          ) : (
+            <div className="text-red-600">No file available for this document.</div>
+          )}
+          <DialogClose asChild>
+            <Button variant="outline" className="mt-4">Close</Button>
+          </DialogClose>
+        </DialogContent>
+      </Dialog>
     </div>
   )
-} 
+}

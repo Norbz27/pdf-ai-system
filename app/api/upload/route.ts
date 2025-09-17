@@ -182,9 +182,8 @@ export async function POST(req: Request) {
     // Save file to uploads directory
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
-    const fileName = (file as any).name || `upload-${Date.now()}.pdf`;
-    const uniqueFileName = `${Date.now()}_${fileName}`;
-    const filePath = path.join(uploadsDir, uniqueFileName);
+    const fileName = (file as any).name;
+    const filePath = path.join(uploadsDir, fileName);
     await writeFile(filePath, buffer);
 
     // Extract text and page count from PDF using pdf-parse
@@ -209,11 +208,11 @@ export async function POST(req: Request) {
       categoryId: new ObjectId(categoryId as string),
       description: description as string,
       size: formatFileSize(buffer.length),
-      filePath: `public/uploads/${uniqueFileName}`,
+      filePath: `public/uploads/${fileName}`,
       pages,
       chunks, // Now includes page, section, embedding
       uploadedBy: new ObjectId(uploadedBy as string),
-      status: "processing",
+      status: "processed",
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
