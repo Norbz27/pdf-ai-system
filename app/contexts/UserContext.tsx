@@ -2,6 +2,7 @@
 
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
+import { setToken } from "@/lib/api-client";
 
 export interface User {
   _id: string
@@ -129,6 +130,12 @@ export function UserProvider({ children }: { children: ReactNode }) {
     }
     checkAuthStatus()
   }, [])
+
+  // Sync API client token with localStorage on mount and when user changes
+  useEffect(() => {
+    const token = localStorage.getItem('authToken');
+    setToken(token);
+  }, [user]);
 
   // Redirect to last dashboard if authenticated and not already on that dashboard
   useEffect(() => {

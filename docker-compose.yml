@@ -1,16 +1,42 @@
-version: '3.8'
-
+version: "3.9"
 services:
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
+  backend:
+    build:
+      context: .
+      dockerfile: server/Dockerfile
     environment:
-      - OLLAMA_HOST=0.0.0.0
+      - MONGODB_URI=mongodb://mongo:27017
+      - DB_NAME=DocuMind_AI
+      - JWT_SECRET=change_me
+      - OLLAMA_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=llama3.2:3b
+      - EMBED_MODEL=nomic-embed-text
+      - FAISS_DATA_DIR=/data/faiss
+      - REDIS_URL=redis://redis:6379/0
+      - FRONTEND_ORIGIN=http://localhost:3000
+    volumes:
+      - faiss-data:/data/faiss
+      - ./public:/app/public
+    ports:
+      - "8000:8000"
+    depends_on:
+      - mongo
+      - redis
+
+  mongo:
+    image: mongo:6
     restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
 
 volumes:
-  ollama_data: 
+  mongo-data:
+  faiss-data: 

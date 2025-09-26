@@ -87,6 +87,7 @@ export default function DocumentsPage() {
     uploadedBy: ""
   })
   const [viewingDoc, setViewingDoc] = useState<any | null>(null)
+  const [docToDelete, setDocToDelete] = useState<Document | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -540,7 +541,7 @@ export default function DocumentsPage() {
                           </DropdownMenuItem>
                           <DropdownMenuItem 
                             className="text-red-600"
-                            onClick={() => handleDeleteDocument(doc._id)}
+                            onClick={() => setDocToDelete(doc)}
                           >
                             <Trash2 className="h-4 w-4 mr-2" />
                             Delete
@@ -596,6 +597,35 @@ export default function DocumentsPage() {
           <DialogClose asChild>
             <Button variant="outline" className="mt-4">Close</Button>
           </DialogClose>
+        </DialogContent>
+      </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <Dialog open={!!docToDelete} onOpenChange={() => setDocToDelete(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Are you sure?</DialogTitle>
+            <DialogDescription>
+              This action cannot be undone. This will permanently delete the document
+              <span className="font-bold"> {docToDelete?.name}</span>.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDocToDelete(null)}>
+              Cancel
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (docToDelete) {
+                  handleDeleteDocument(docToDelete._id)
+                  setDocToDelete(null)
+                }
+              }}
+            >
+              Delete
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

@@ -1,0 +1,4 @@
+- [x] Update DocumentModel to include sharedWith and accessGrants fields
+- [x] Implement POST /documents/{id}/access endpoint for granting access by role or user
+- [x] Update projections to include accessGrants
+- [ ] Test role-based access filtering in document list

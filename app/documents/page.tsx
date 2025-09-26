@@ -37,10 +37,14 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
+  DialogDescription,
+  DialogFooter,
   DialogClose,
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
 import ReactSelect from "react-select"
+import { listDocumentsWithFilters, getCategories, getRoles, getUsers, grantDocumentAccess, deleteDocument as deleteDocumentApi } from "@/lib/api-client";
 
 export default function Dashboard() {
   const { toast } = useToast()
@@ -60,6 +64,7 @@ export default function Dashboard() {
 
   const [roles, setRoles] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
+  const [docToDelete, setDocToDelete] = useState<any | null>(null);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -72,42 +77,23 @@ export default function Dashboard() {
       try {
         const userId = user._id;
         const userRole = user.role;
-        // Fetch documents
-        const docsRes = await fetch(`/api/documents?userId=${userId}&userRole=${userRole}`)
-        if (!docsRes.ok) throw new Error("Failed to fetch documents")
-        const docsData = await docsRes.json()
+        // Fetch documents from FastAPI
+        const docsData = await listDocumentsWithFilters({ userId, userRole })
         setDocuments(docsData.documents || [])
-
-        // Fetch categories
-        const catsRes = await fetch("/api/categories")
-        if (catsRes.ok) {
-          const catsData = await catsRes.json()
-          setCategories(catsData.categories || [])
+        const token = localStorage.getItem('authToken');
+        if (token) {
+          const catsData = await getCategories(token);
+          setCategories(catsData.categories || []);
+        } else {
+          console.warn('No auth token available for categories request');
+          setCategories([]);
         }
-
-        // Fetch roles
-        const rolesRes = await fetch("/api/roles", {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        })
-        if (rolesRes.ok) {
-          const rolesData = await rolesRes.json()
-          setRoles(rolesData.roles || [])
-        }
-
-        // Fetch users
-        const usersRes = await fetch("/api/users", {
-          headers: {
-            'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-          }
-        })
-        if (usersRes.ok) {
-          const usersData = await usersRes.json()
-          setUsers(usersData.users || [])
-        }
-      } catch (err: any) {
-        setError(err.message || "Failed to fetch data")
+        const rolesData = await getRoles()
+        setRoles(rolesData.roles || [])
+        const usersData = await getUsers()
+        setUsers(usersData.users || [])
+      } catch (err) {
+        setError("Failed to fetch data")
       } finally {
         setLoading(false)
       }
@@ -203,32 +189,11 @@ export default function Dashboard() {
       return;
     }
     try {
-      const res = await fetch(`/api/documents/${managingAccessDoc._id}/access`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${localStorage.getItem('authToken')}`
-        },
-        body: JSON.stringify({
-          type: searchType,
-          values: targets
-        })
-      });
-      if (res.ok) {
-        toast({
-          title: "Success",
-          description: "Access added successfully"
-        });
-        setAccessName([]);
-        setAccessRole([]);
-      } else {
-        const error = await res.json();
-        toast({
-          title: "Error",
-          description: error.error || 'Failed to add access',
-          variant: "destructive"
-        });
-      }
+      const token = localStorage.getItem('authToken') || undefined;
+      await grantDocumentAccess(managingAccessDoc._id, { type: searchType, values: targets }, token);
+      toast({ title: "Success", description: "Access added successfully" });
+      setAccessName([]);
+      setAccessRole([]);
     } catch (err) {
       toast({
         title: "Error",
@@ -240,11 +205,13 @@ export default function Dashboard() {
 
   // Handler for deleting a document
   const handleDelete = async (doc: any) => {
-    if (!confirm(`Are you sure you want to delete '${doc.name}'?`)) return;
     try {
-      const res = await fetch(`/api/documents?id=${doc._id}`, { method: "DELETE" });
-      if (!res.ok) throw new Error("Failed to delete document");
+      await deleteDocumentApi(doc._id);
       setDocuments((prev) => prev.filter((d) => d._id !== doc._id));
+      toast({
+        title: "Success",
+        description: "Document deleted successfully",
+      });
     } catch (err: any) {
       toast({
         title: "Error",
@@ -284,123 +251,204 @@ export default function Dashboard() {
 
       {/* Modal for managing access */}
       <Dialog open={!!managingAccessDoc} onOpenChange={(open) => !open && setManagingAccessDoc(null)}>
-        <DialogContent>
+        <DialogContent className="max-w-2xl">
           <DialogHeader>
             <DialogTitle>Manage Access for: {managingAccessDoc?.name}</DialogTitle>
           </DialogHeader>
-          <div className="space-y-4">
+          <div className="space-y-6">
+            {/* Current Shared Users */}
             <div>
-              <label className="block text-sm font-medium mb-1">Search Type</label>
-              <Select value={searchType} onValueChange={setSearchType}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Select search type" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="name">By Name</SelectItem>
-                  <SelectItem value="role">By Role</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            {searchType === "name" ? (
-              <div>
-                <label className="block text-sm font-medium mb-1">User Name</label>
-                <ReactSelect
-                  isMulti
-                  options={users.map(u => ({ value: u.name, label: u.name }))}
-                  value={accessName.map(name => ({ value: name, label: name }))}
-                  onChange={(selected) => setAccessName(selected ? selected.map(s => s.value) : [])}
-                  isSearchable
-                  placeholder="Select users"
-                  styles={{
-                    control: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      borderColor: '#d1d5db',
-                      borderRadius: '6px',
-                      minHeight: '36px',
-                      boxShadow: 'none',
-                      '&:hover': {
-                        borderColor: '#9ca3af',
-                      },
-                    }),
-                    option: (provided, state) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
-                      color: state.isFocused ? 'black' : 'black',
-                    }),
-                    placeholder: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      color: '#9ca3af',
-                    }),
-                    multiValue: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                    multiValueLabel: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                    multiValueRemove: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                  }}
-                />
+              <h3 className="text-sm font-medium mb-2">Shared with Users</h3>
+              <div className="flex flex-wrap gap-2">
+                {managingAccessDoc?.sharedUserNames && managingAccessDoc.sharedUserNames.length > 0 ? (
+                  managingAccessDoc.sharedUserNames.map((userName: string, index: number) => (
+                    <Badge key={index} variant="secondary" className="flex items-center gap-1">
+                      {userName}
+                    </Badge>
+                  ))
+                ) : (
+                  <p className="text-sm text-gray-500">No users shared</p>
+                )}
               </div>
-            ) : (
+            </div>
+
+            {/* Current Role Grants */}
+            <div>
+              <h3 className="text-sm font-medium mb-2">Granted Roles</h3>
+              <div className="flex flex-wrap gap-2">
+                {managingAccessDoc?.accessGrants && managingAccessDoc.accessGrants.some((grant: any) => grant.type === "role") ? (
+                  managingAccessDoc.accessGrants
+                    .filter((grant: any) => grant.type === "role")
+                    .map((grant: any, index: number) => (
+                      <Badge key={index} variant="outline" className="flex items-center gap-1">
+                        {roles.find(r => r._id === grant.value)?.name || grant.value}
+                      </Badge>
+                    ))
+                ) : (
+                  <p className="text-sm text-gray-500">No roles granted</p>
+                )}
+              </div>
+            </div>
+
+            {/* Public Access Toggle */}
+            {managingAccessDoc && user && managingAccessDoc.uploadedBy?.toString() === user._id && (
               <div>
-                <label className="block text-sm font-medium mb-1">Role</label>
-                <ReactSelect
-                  isMulti
-                  options={roles.map(r => ({ value: r.name, label: r.name }))}
-                  value={accessRole.map(role => ({ value: role, label: role }))}
-                  onChange={(selected) => setAccessRole(selected ? selected.map(s => s.value) : [])}
-                  isSearchable
-                  placeholder="Select roles"
-                  styles={{
-                    control: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      borderColor: '#d1d5db',
-                      borderRadius: '6px',
-                      minHeight: '36px',
-                      boxShadow: 'none',
-                      '&:hover': {
-                        borderColor: '#9ca3af',
-                      },
-                    }),
-                    option: (provided, state) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
-                      color: state.isFocused ? 'black' : 'black',
-                    }),
-                    placeholder: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                      color: '#9ca3af',
-                    }),
-                    multiValue: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                    multiValueLabel: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                    multiValueRemove: (provided) => ({
-                      ...provided,
-                      fontSize: '14px',
-                    }),
-                  }}
-                />
+                <label className="block text-sm font-medium mb-2">Public Access</label>
+                <div className="flex items-center space-x-2">
+                  <Switch
+                    checked={managingAccessDoc.publicAccess || false}
+                    onCheckedChange={async (checked) => {
+                      try {
+                        const token = localStorage.getItem('authToken') || undefined;
+                        await fetch(`/api/documents/${managingAccessDoc._id}/access/public`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                          body: JSON.stringify({ publicAccess: checked }),
+                        });
+                        toast({ title: "Success", description: "Public access updated" });
+                        // Update local state
+                        setManagingAccessDoc((prev: any) => prev ? { ...prev, publicAccess: checked } : null);
+                        // Refresh documents
+                        const refreshedDocs = await listDocumentsWithFilters({ userId: user._id, userRole: user.role });
+                        setDocuments(refreshedDocs.documents || []);
+                      } catch (err) {
+                        toast({
+                          title: "Error",
+                          description: "Failed to update public access",
+                          variant: "destructive",
+                        });
+                      }
+                    }}
+                  />
+                  <span className="text-sm text-gray-700">
+                    {managingAccessDoc.publicAccess ? "Public (anyone can view)" : "Private"}
+                  </span>
+                </div>
               </div>
             )}
 
-            <Button onClick={handleAddAccess}>Add Access</Button>
+            {/* Add New Access */}
+            <div className="border-t pt-4">
+              <h3 className="text-sm font-medium mb-2">Add New Access</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-sm font-medium mb-1">Search Type</label>
+                  <Select value={searchType} onValueChange={setSearchType}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Select search type" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="name">By Name</SelectItem>
+                      <SelectItem value="role">By Role</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {searchType === "name" ? (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">User Name</label>
+                    <ReactSelect
+                      isMulti
+                      options={managingAccessDoc ? users.filter(u => u._id !== managingAccessDoc.uploadedBy).map(u => ({ value: u.name, label: u.name })) : []}
+                      value={accessName.map(name => ({ value: name, label: name }))}
+                      onChange={(selected) => setAccessName(selected ? selected.map(s => s.value) : [])}
+                      isSearchable
+                      placeholder="Select users"
+                      styles={{
+                        control: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          borderColor: '#d1d5db',
+                          borderRadius: '6px',
+                          minHeight: '36px',
+                          boxShadow: 'none',
+                          '&:hover': {
+                            borderColor: '#9ca3af',
+                          },
+                        }),
+                        option: (provided, state) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
+                          color: state.isFocused ? 'black' : 'black',
+                        }),
+                        placeholder: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          color: '#9ca3af',
+                        }),
+                        multiValue: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                        multiValueLabel: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                        multiValueRemove: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                      }}
+                    />
+                  </div>
+                ) : (
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Role</label>
+                    <ReactSelect
+                      isMulti
+                      options={roles.filter(r => r.name !== 'Admin').map(r => ({ value: r.name, label: r.name }))}
+                      value={accessRole.map(role => ({ value: role, label: role }))}
+                      onChange={(selected) => setAccessRole(selected ? selected.map(s => s.value) : [])}
+                      isSearchable
+                      placeholder="Select roles"
+                      styles={{
+                        control: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          borderColor: '#d1d5db',
+                          borderRadius: '6px',
+                          minHeight: '36px',
+                          boxShadow: 'none',
+                          '&:hover': {
+                            borderColor: '#9ca3af',
+                          },
+                        }),
+                        option: (provided, state) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          backgroundColor: state.isFocused ? '#D9D9D9' : 'white',
+                          color: state.isFocused ? 'black' : 'black',
+                        }),
+                        placeholder: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                          color: '#9ca3af',
+                        }),
+                        multiValue: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                        multiValueLabel: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                        multiValueRemove: (provided) => ({
+                          ...provided,
+                          fontSize: '14px',
+                        }),
+                      }}
+                    />
+                  </div>
+                )}
+                <Button onClick={handleAddAccess} className="w-full">Add Access</Button>
+              </div>
+            </div>
           </div>
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button variant="outline">Close</Button>
+            </DialogClose>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
         
@@ -509,13 +557,19 @@ export default function Dashboard() {
                             <FileText className="h-5 w-5" />
                             <h3 className="font-semibold text-gray-900">{doc.name}</h3>
                           <Badge variant="outline">{doc.categoryName || 'Uncategorized'}</Badge>
-                          {user && doc.uploadedBy?.toString() !== user._id && doc.sharedWith?.some((id: string) => id === user._id) && <Badge variant="secondary">Shared</Badge>}
+                          {doc.publicAccess && <Badge variant="secondary">Public</Badge>}
+                          {user && doc.uploadedBy?.toString() !== user._id && !doc.publicAccess && doc.sharedWith?.some((id: string) => id === user._id) && <Badge variant="secondary">Shared</Badge>}
                           </div>
                             <p className="text-sm text-gray-600 mb-3">{doc.description}</p>
                           <div className="flex items-center space-x-6 text-xs text-gray-500">
                             <span>{doc.size || 'Unknown size'}</span>
                               <span>Uploaded {doc.createdAt ? new Date(doc.createdAt).toLocaleDateString() : "-"}</span>
                           </div>
+                          {doc.accessGrants && doc.accessGrants.some((grant: any) => grant.type === "role") && (
+                            <div className="text-xs text-gray-500 mt-1">
+                              Granted to roles: {doc.accessGrants.filter((grant: any) => grant.type === "role").map((grant: any) => roles.find(r => r._id === grant.value)?.name || grant.value).join(", ")}
+                            </div>
+                          )}
                         </div>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -543,7 +597,7 @@ export default function Dashboard() {
                                 </DropdownMenuItem>
                               )}
                               {doc.uploadedBy?.toString() === user?._id && (
-                                <DropdownMenuItem className="text-red-600" onClick={() => handleDelete(doc)}>
+                                <DropdownMenuItem className="text-red-600" onClick={() => setDocToDelete(doc)}>
                                   <Trash2 className="h-4 w-4 mr-2" />
                                   Delete
                                 </DropdownMenuItem>
@@ -559,6 +613,35 @@ export default function Dashboard() {
             </Card>
           </div>
         </div>
+
+        {/* Delete Confirmation Modal */}
+        <Dialog open={!!docToDelete} onOpenChange={() => setDocToDelete(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Are you sure?</DialogTitle>
+              <DialogDescription>
+                This action cannot be undone. This will permanently delete the document
+                <span className="font-bold"> {docToDelete?.name}</span>.
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDocToDelete(null)}>
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                onClick={async () => {
+                  if (docToDelete) {
+                    await handleDelete(docToDelete);
+                    setDocToDelete(null);
+                  }
+                }}
+              >
+                Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </UserLayout>
     </AuthGuard>
   )

@@ -17,6 +17,7 @@ import Link from "next/link"
 import UserLayout from "@/app/user-layout"
 import AuthGuard from "@/app/components/AuthGuard"
 import { useUser } from "@/app/contexts/UserContext"
+import { getCategories, uploadDocument, getDocumentById } from "@/lib/api-client"
 
 interface UploadFile {
   id: string
@@ -36,23 +37,33 @@ export default function UploadPage() {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { user } = useUser()
 
-  // Fetch categories from API
+  // Fetch categories from FastAPI
   useEffect(() => {
     const fetchCategories = async () => {
       try {
-        const response = await fetch('/api/categories')
-        if (response.ok) {
-          const data = await response.json()
-          setCategories(data.categories || [])
+        const token = localStorage.getItem('authToken');
+        if (token) {
+          const data = await getCategories(token);
+          setCategories(data.categories || []);
+        } else {
+          console.warn('No auth token available for categories request');
+          setCategories([]);
         }
       } catch (error) {
-        console.error('Failed to fetch categories:', error)
+        console.error('Failed to fetch categories:', error);
+        setCategories([]);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
+    };
+
+    // Only fetch if user is authenticated
+    if (user && user.status === 'active') {
+      fetchCategories();
+    } else {
+      setLoading(false);
     }
-    fetchCategories()
-  }, [])
+  }, [user])
 
   const handleDrag = useCallback((e: React.DragEvent) => {
     e.preventDefault()
@@ -103,52 +114,51 @@ export default function UploadPage() {
     setFiles((prev) => prev.filter((file) => file.id !== id))
   }
 
-  const uploadFile = async (file: UploadFile) => {
-    if (!file.category) {
-      updateFile(file.id, { status: "error", error: "Please select a category" })
-      return
-    }
-
+  const handleFileUpload = async (file: UploadFile) => {
     if (!user) {
-      updateFile(file.id, { status: "error", error: "User not authenticated" })
-      return
+      updateFile(file.id, { status: "error", error: "User not authenticated." });
+      return;
     }
 
-    updateFile(file.id, { status: "uploading", progress: 0 })
-
-    const formData = new FormData();
-    formData.append("file", file.file);
-    formData.append("categoryId", file.category);
-    formData.append("description", file.description);
-    formData.append("uploadedBy", user._id);
+    updateFile(file.id, { status: "uploading", progress: 0 });
 
     try {
-      const res = await fetch("/api/upload", {
-        method: "POST",
-        body: formData,
-      })
+      const response = await uploadDocument({
+        file: file.file,
+        categoryId: file.category,
+        description: file.description,
+        uploadedBy: user._id,
+        onUploadProgress: (progress) => {
+          updateFile(file.id, { progress });
+        },
+      });
 
-      if (!res.ok) {
-        const errorData = await res.json()
-        throw new Error(errorData.message || "Upload failed")
-      }
+      const { id: document_id } = response;
+      updateFile(file.id, { status: "processing", progress: 100 });
 
-      updateFile(file.id, { status: "processing", progress: 100 })
+      const pollStatus = async () => {
+        try {
+          const doc = await getDocumentById(document_id, { userId: user._id, userRole: user.role });
+          if (doc.document.status === "processed") {
+            updateFile(file.id, { status: "completed" });
+          } else {
+            setTimeout(pollStatus, 5000); // Poll every 5s
+          }
+        } catch (error) {
+          console.error("Polling error:", error);
+          setTimeout(pollStatus, 5000);
+        }
+      };
+      setTimeout(pollStatus, 5000);
 
-      setTimeout(() => {
-        updateFile(file.id, { status: "completed" })
-      }, 2000)
-    } catch (err: any) {
-      updateFile(file.id, {
-        status: "error",
-        error: err.message || "Failed to upload",
-      })
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      updateFile(file.id, { status: "error", error: errorMessage });
     }
-  }
-
+  };
 
   const uploadAllFiles = () => {
-    files.filter((file) => file.status === "pending" && file.category).forEach(uploadFile)
+    files.filter((file) => file.status === "pending" && file.category).forEach(handleFileUpload)
   }
 
   const getStatusIcon = (status: UploadFile["status"]) => {
@@ -174,7 +184,7 @@ export default function UploadPage() {
       case "processing":
         return "Processing with AI..."
       case "completed":
-        return "Ready for chat"
+        return "Complete"
       case "error":
         return "Upload failed"
       default:
@@ -361,7 +371,7 @@ export default function UploadPage() {
 
                             {file.status === "pending" && file.category && (
                               <div className="mt-3">
-                                <Button size="sm" onClick={() => uploadFile(file)} className="h-8">
+                                <Button size="sm" onClick={() => handleFileUpload(file)} className="h-8">
                                   <Upload className="h-3 w-3 mr-1" />
                                   Upload
                                 </Button>

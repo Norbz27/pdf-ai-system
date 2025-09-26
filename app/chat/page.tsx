@@ -29,6 +29,7 @@ import ReactMarkdown from 'react-markdown';
 import UserLayout from "@/app/user-layout"
 import AuthGuard from "@/app/components/AuthGuard"
 import { useUser } from "@/app/contexts/UserContext"
+import { listDocumentsWithFilters, chat } from "@/lib/api-client";
 
 interface Message {
   id: string
@@ -46,7 +47,7 @@ interface Message {
   }>
 }
 
-function TypingMessage({ content, onDone }: { content: string; onDone?: () => void }) {
+function TypingMessage({ content = "", onDone }: { content?: string; onDone?: () => void }) {
   const [displayed, setDisplayed] = useState("");
   useEffect(() => {
     let i = 0;
@@ -130,12 +131,10 @@ export default function ChatPage() {
       setAvailableDocuments([]);
       return;
     }
-    // Fetch available documents from backend filtered by user
+    // Fetch available documents from FastAPI backend filtered by user
     const fetchDocuments = async () => {
       try {
-        const res = await fetch(`/api/documents?userId=${user._id}&userRole=${user.role}`);
-        if (!res.ok) throw new Error("Failed to fetch documents");
-        const data = await res.json();
+        const data = await listDocumentsWithFilters({ userId: user._id, userRole: user.role });
         setAvailableDocuments(data.documents || []);
       } catch (err) {
         setAvailableDocuments([]);
@@ -144,27 +143,13 @@ export default function ChatPage() {
     fetchDocuments();
   }, [user]);
 
-
-
   const fetchAIResponse = async (prompt: string): Promise<string> => {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        question: prompt,
-        docIds: selectedDocuments,
-        user,
-      }),
-    })
-
-    if (!response.ok) {
-      throw new Error("Failed to get AI response")
-    }
-
-    const data = await response.json()
-    return data.answer
+    const data = await chat({
+      question: prompt,
+      docIds: selectedDocuments,
+      user,
+    });
+    return data.answer as string;
   }
 
   const handleSendMessage = async () => {
