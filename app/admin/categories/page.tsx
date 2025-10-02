@@ -39,6 +39,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { API_ENDPOINTS } from "@/lib/api"
 
 interface Category {
   _id: string
@@ -70,7 +71,11 @@ export default function CategoriesPage() {
   const fetchCategories = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/admin/categories')
+      const response = await fetch(API_ENDPOINTS.admin.categories, {
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
+      })
       if (!response.ok) {
         throw new Error('Failed to fetch categories')
       }
@@ -99,9 +104,10 @@ export default function CategoriesPage() {
         return
       }
 
-      const response = await fetch('/api/admin/categories', {
+      const response = await fetch(API_ENDPOINTS.admin.categories, {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(newCategory),
@@ -147,9 +153,10 @@ export default function CategoriesPage() {
         return
       }
 
-      const response = await fetch(`/api/admin/categories/${editingCategory._id}`, {
+      const response = await fetch(`${API_ENDPOINTS.admin.categories}/${editingCategory._id}`, {
         method: 'PUT',
         headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -184,8 +191,11 @@ export default function CategoriesPage() {
 
   const handleDeleteCategory = async (categoryId: string) => {
     try {
-      const response = await fetch(`/api/admin/categories/${categoryId}`, {
+      const response = await fetch(`${API_ENDPOINTS.admin.categories}/${categoryId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
       })
 
       const data = await response.json()

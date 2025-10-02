@@ -36,38 +36,80 @@ def get_relevant_chunks_keyword(chunks: List[Dict], question: str) -> List[Dict]
     keywords = question.lower().split()
     return sorted(chunks, key=lambda c: sum(1 for w in keywords if w in c["text"].lower()), reverse=True)
 
-async def select_relevant_chunks(docs: List[Dict], question: str) -> List[Dict]:
-    all_chunks = []
-    for doc in docs:
-        for chunk in doc.get("chunks", []):
-            all_chunks.append({**chunk, "doc": doc})
-
-    if not all_chunks:
+async def select_relevant_chunks(question: str, docs: List[Dict]) -> List[Dict]:
+    if not docs:
+        print("No docs provided")
         return []
 
-    # Try semantic
-    try:
-        query_emb = await get_embedding(question)
-        for chunk in all_chunks[:100]:  # limit
-            if "embedding" not in chunk or not chunk["embedding"]:
-                chunk["embedding"] = await get_embedding(chunk["text"])
-            chunk["score"] = cosine_similarity(query_emb, chunk["embedding"])
-        ranked = sorted(all_chunks, key=lambda c: c.get("score", 0), reverse=True)
-    except Exception:
+    allowed_ids = {str(doc["_id"]) for doc in docs}
+    doc_map = {str(doc["_id"]): doc for doc in docs}
+    print(f"Allowed doc IDs: {allowed_ids}")
+    print(f"Number of docs: {len(docs)}")
+    for doc in docs:
+        chunks = doc.get("chunks", [])
+        print(f"Doc {doc['_id']}: {len(chunks)} chunks")
+        if chunks:
+            print(f"Sample chunk text: {chunks[0].get('text', '')[:100]}...")
+
+    vector_store = await load_faiss_index()
+    if not vector_store:
+        # Fallback to keyword search on chunks
+        all_chunks = []
+        for doc in docs:
+            for chunk in doc.get("chunks", []):
+                all_chunks.append({**chunk, "doc": doc})
         ranked = get_relevant_chunks_keyword(all_chunks, question)
+        selected = []
+        doc_count = {}
+        total_len = 0
+        for chunk in ranked:
+            doc_id = str(chunk["doc"]["_id"])
+            if doc_count.get(doc_id, 0) < CHUNKS_PER_DOC:
+                if total_len + len(chunk["text"]) > MAX_CONTEXT_LENGTH:
+                    break
+                selected.append(chunk)
+                doc_count[doc_id] = doc_count.get(doc_id, 0) + 1
+                total_len += len(chunk["text"])
+        return selected
+
+    # FAISS similarity search
+    try:
+        results = vector_store.similarity_search_with_score(question, k=500)
+        print(f"FAISS search returned {len(results)} results")
+        filtered_results = [(doc, score) for doc, score in results if doc.metadata.get('doc_id') in allowed_ids]
+        print(f"Filtered to {len(filtered_results)} results for allowed docs {allowed_ids}")
+        if results:
+            print(f"Sample metadata: {results[0][0].metadata}")
+        ranked = sorted(filtered_results, key=lambda x: x[1])  # lower score is better
+    except Exception as e:
+        print(f"FAISS search failed: {e}")
+        # Fallback
+        all_chunks = []
+        for doc in docs:
+            for chunk in doc.get("chunks", []):
+                all_chunks.append({**chunk, "doc": doc})
+        ranked = [(chunk, 0) for chunk in get_relevant_chunks_keyword(all_chunks, question)]
 
     # Select top
     selected = []
     doc_count = {}
     total_len = 0
-    for chunk in ranked:
-        doc_id = str(chunk["doc"]["_id"])
+    for chunk_doc, score in ranked:
+        doc_id = chunk_doc.metadata.get('doc_id')
         if doc_count.get(doc_id, 0) < CHUNKS_PER_DOC:
-            if total_len + len(chunk["text"]) > MAX_CONTEXT_LENGTH:
+            text = chunk_doc.page_content
+            if total_len + len(text) > MAX_CONTEXT_LENGTH:
                 break
+            # Reconstruct chunk dict
+            chunk = {
+                "text": text,
+                "doc": doc_map[doc_id],
+                "metadata": chunk_doc.metadata,
+                "score": score
+            }
             selected.append(chunk)
             doc_count[doc_id] = doc_count.get(doc_id, 0) + 1
-            total_len += len(chunk["text"])
+            total_len += len(text)
     return selected
 
 @router.websocket("/ws")
@@ -137,13 +179,73 @@ async def chat_endpoint(body: ChatRequest, user=Depends(JWTBearer())):
         prompt += f"\n\nUser Question: {question}\n\nAnswer:"
     else:
         # Select chunks
-        selected_chunks = await select_relevant_chunks(docs, question)
-        context = "\n\n".join(c["text"] for c in selected_chunks)[:MAX_CONTEXT_LENGTH]
+        selected_chunks = await select_relevant_chunks(question, docs)
+        print(f"Selected {len(selected_chunks)} chunks")
+        if selected_chunks:
+            print(f"Sample selected chunk: {selected_chunks[0]['text'][:100]}...")
+
+        # Build context with metadata for citations
+        context_parts = []
+        for c in selected_chunks:
+            doc_name = c["doc"].get("name", "Unknown Document")
+            page = c.get("metadata", {}).get("page", "N/A")
+            context_parts.append(f"[Source: {doc_name}, p.{page}]\n{c['text']}")
+        context = "\n\n".join(context_parts)[:MAX_CONTEXT_LENGTH]
+        print(f"Context length: {len(context)}")
+
+        # Add optional user details
         user_details = ""
         if user_obj:
-            user_details = f"\n\nUser Info:\nName: {user_obj.get('name', 'Unknown')}\nEmail: {user_obj.get('email', 'Unknown')}\nRole: {user_obj.get('role', 'Unknown')}"
-        prompt = f"You are Oxy, an expert document assistant of a company Oxytec Solutions Inc. Use ONLY the following document content to answer the user's question. Do not use outside knowledge. Use the term company instead of from the document. Respond with proper formating like indention, header, listing, table, etc. Specify where you found the info like what page or section on the end of your respond.\n\nDocument Content:\n{context}{user_details}\n\nUser Question: {question}\n\nAnswer:"
+            user_details = (
+                f"\n\nUser Info:\n"
+                f"Name: {user_obj.get('name', 'Unknown')}\n"
+                f"Email: {user_obj.get('email', 'Unknown')}\n"
+                f"Role: {user_obj.get('role', 'Unknown')}"
+            )
 
+        # Structured system prompt
+        prompt = f"""
+        You are Oxy, an internal AI knowledge assistant of the company Oxytec Solutions Inc.
+
+        ## Core Instructions
+        - Always answer based **only** on the provided document context.
+        - If you do not find relevant information, say:  
+        "I couldn’t find enough details in the documents to answer that accurately."
+        - Never invent information not present in the documents.
+        - Keep answers clear, concise, and professional.
+
+        ## Answer Structure
+        1. **Direct Answer** → Provide the best possible answer from the documents.  
+        2. **Supporting Evidence** → Show short quotes or paraphrases with document name + page number.  
+        Example: (Source: SafetyManual.pdf, p.12)  
+        3. **Suggested Follow-ups** → Offer 1–2 natural next questions the user might ask.
+
+        ## Style & Tone
+        - Use plain, accessible language unless technical detail is explicitly required.
+        - Be confident but cautious: avoid speculation if evidence is weak.
+        - Must use bullet points, headers, or tables for readability.
+
+        ## Special Modes
+        - If asked to summarize → Provide a short summary (3–5 sentences max).
+        - If asked to compare → List similarities and differences in bullet points.
+        - If asked for procedures → Return step-by-step instructions.
+
+        ## Citations
+        - Always attach source references with filename + page when available.
+        - If multiple sources agree, cite them all.
+        - If no page number exists, cite only the filename.
+
+        ---
+        Context from documents:
+        {context}
+        {user_details}
+
+        User Question:
+        {question}
+
+        Answer:
+        """.strip()
+        
     # Call Ollama
     async with httpx.AsyncClient() as client:
         res = await client.post(f"{OLLAMA_URL}/api/generate", json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False}, timeout=60.0)

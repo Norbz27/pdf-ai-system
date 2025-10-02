@@ -19,6 +19,7 @@ import { useRouter } from "next/navigation"
 import { useUser, User } from "./contexts/UserContext"
 import TwoFAModal from "./components/TwoFAModal"
 import ChangePasswordModal from "./components/ChangePasswordModal"
+import { API_ENDPOINTS } from "@/lib/api"
 
 
 export default function LandingPage() {
@@ -36,6 +37,7 @@ export default function LandingPage() {
   const [isForgotFlow, setIsForgotFlow] = useState(false)
   const [forgotUser, setForgotUser] = useState<{ _id: string, email: string, name?: string } | null>(null)
   const [forgotTwoFAToken, setForgotTwoFAToken] = useState<string | null>(null)
+  const [resetToken, setResetToken] = useState<string | undefined>(undefined)
   const [blockRedirect, setBlockRedirect] = useState(false)
   const [modalDismissed, setModalDismissed] = useState(false)
   const [isChangingPassword, setIsChangingPassword] = useState(false)
@@ -157,6 +159,7 @@ export default function LandingPage() {
   const handleTwoFAVerification = (data?: { token?: string }) => {
     // Forgot-password flow: after 2FA verification, allow password change
     if (isForgotFlow) {
+      setResetToken(data?.token || undefined)
       setShowTwoFAModal(false)
       setShowChangePasswordModal(true)
       setIsChangingPassword(true)
@@ -431,7 +434,7 @@ export default function LandingPage() {
 
     try {
       setLoading(true)
-      const response = await fetch('/api/auth/login', {
+      const response = await fetch(API_ENDPOINTS.auth.login, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -530,7 +533,7 @@ export default function LandingPage() {
     }
     try {
       setForgotLoading(true)
-      const res = await fetch('/api/auth/forgot-password/initiate', {
+      const res = await fetch(API_ENDPOINTS.auth.forgotPasswordInitiate, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email: forgotEmail.trim() })
@@ -662,6 +665,7 @@ export default function LandingPage() {
           onPasswordChanged={isForgotFlow ? handleForgotPasswordChanged : handlePasswordChanged}
           userId={forgotUser?._id || pendingUser?._id || (user as User | null)?._id || ''}
           email={forgotUser?.email || pendingUser?.email || (user as User | null)?.email || ''}
+          resetToken={resetToken}
         />
       )}
 

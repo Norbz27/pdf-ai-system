@@ -17,6 +17,7 @@ import {
 } from "lucide-react"
 import { useRouter } from "next/navigation"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts'
+import { API_ENDPOINTS } from "@/lib/api"
 
 interface Stat {
   title: string
@@ -56,7 +57,13 @@ export default function AdminDashboard() {
   const fetchDashboardData = async () => {
     try {
       setLoading(true)
-      const response = await fetch('/api/admin/dashboard')
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(API_ENDPOINTS.admin.dashboard, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
       if (!response.ok) {
         throw new Error('Failed to fetch dashboard data')
       }

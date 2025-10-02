@@ -7,8 +7,9 @@ JWT_SECRET = "OTRhxSuDYzNGQjoATv153UBgeaV9n6Bz"
 # Example payload (customize as needed)
 payload = {
     "sub": "testuser",
-    "permissions": ["chat"],
-    "exp": datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+    "userId": "507f1f77bcf86cd799439011",  # Example ObjectId
+    "permissions": ["user_page_access", "chat"],
+    "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
 }
 
 # Generate JWT token

@@ -17,18 +17,15 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import {
   Activity,
   Search,
-  Filter,
   Download,
   Eye,
-  Clock,
   User,
   FileText,
   Shield,
   AlertTriangle,
-  CheckCircle,
-  XCircle,
   Info,
-  Loader2
+  Loader2,
+  Clock
 } from "lucide-react"
 import {
   Dialog,
@@ -36,11 +33,11 @@ import {
   DialogDescription,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { AuditLog, AuditLogResponse } from "@/lib/models/audit-log"
+import { API_ENDPOINTS } from "@/lib/api"
 
 // Mock data - fallback if API fails
 const mockAuditLogs = [
@@ -200,7 +197,7 @@ export default function AuditLogsPage() {
         ...(searchTerm && { search: searchTerm })
       })
 
-      const response = await fetch(`/api/audit-logs?${params}`)
+      const response = await fetch(`${API_ENDPOINTS.auditLogs.list}?${params}`)
       if (!response.ok) {
         throw new Error('Failed to fetch audit logs')
       }
@@ -275,7 +272,7 @@ export default function AuditLogsPage() {
 
   const exportLogs = async () => {
     try {
-      const response = await fetch('/api/audit-logs/export', {
+      const response = await fetch(API_ENDPOINTS.auditLogs.export, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -304,11 +301,11 @@ export default function AuditLogsPage() {
     } catch (err) {
       console.error('Export failed:', err)
       // Fallback: simple CSV export
-      const csvContent = "data:text/csv;charset=utf-8,"
-        + "Timestamp,User,Action,Resource,Severity,IP Address\n"
-        + filteredLogs.map(log =>
-            `${log.timestamp},${log.user},${log.action},${log.resource},${log.severity},${log.ipAddress || ''}`
-          ).join("\n")
+      const csvContent = "data:text/csv;charset=utf-8," +
+        "Timestamp,User,Action,Resource,Severity,IP Address\n" +
+        filteredLogs.map(log =>
+          `${log.timestamp},${log.user},${log.action},${log.resource},${log.severity},${log.ipAddress || ''}`
+        ).join("\n")
 
       const encodedUri = encodeURI(csvContent)
       const link = document.createElement("a")

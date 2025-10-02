@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2, Eye, EyeOff } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { API_ENDPOINTS } from "@/lib/api"
 
 interface ChangePasswordModalProps {
   isOpen: boolean
@@ -23,6 +24,7 @@ interface ChangePasswordModalProps {
   userId: string
   email: string
   requireCurrentPassword?: boolean
+  resetToken?: string
 }
 
 export default function ChangePasswordModal({
@@ -32,6 +34,7 @@ export default function ChangePasswordModal({
   userId,
   email,
   requireCurrentPassword = false,
+  resetToken,
 }: ChangePasswordModalProps) {
   const [currentPassword, setCurrentPassword] = useState("")
   const [newPassword, setNewPassword] = useState("")
@@ -70,16 +73,21 @@ export default function ChangePasswordModal({
     setIsLoading(true)
 
     try {
-      const response = await fetch('/api/auth/change-password', {
+      const endpoint = resetToken ? API_ENDPOINTS.auth.forgotPasswordReset : API_ENDPOINTS.auth.changePassword
+      const payload = resetToken
+        ? { token: resetToken, newPassword }
+        : {
+            userId,
+            currentPassword: requireCurrentPassword ? currentPassword : undefined,
+            newPassword,
+          }
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          userId,
-          currentPassword: requireCurrentPassword ? currentPassword : undefined,
-          newPassword,
-        }),
+        body: JSON.stringify(payload),
       })
 
       const data = await response.json()
@@ -123,7 +131,7 @@ export default function ChangePasswordModal({
             Please change your password to continue. This is required for security reasons.
           </DialogDescription>
         </DialogHeader>
-        
+
         <form onSubmit={handleSubmit}>
           <div className="space-y-4">
             {requireCurrentPassword && (

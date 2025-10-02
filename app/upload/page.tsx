@@ -128,9 +128,6 @@ export default function UploadPage() {
         categoryId: file.category,
         description: file.description,
         uploadedBy: user._id,
-        onUploadProgress: (progress) => {
-          updateFile(file.id, { progress });
-        },
       });
 
       const { id: document_id } = response;

@@ -14,6 +14,12 @@ from server.routes.admin_documents import router as admin_documents_router
 from server.routes.categories import router as categories_router
 from server.routes.roles import router as roles_router
 from server.routes.users import router as users_router
+from server.routes.auth import router as auth_router
+from server.routes.audit_logs import router as audit_logs_router
+from server.routes.download import router as download_router
+from server.routes.ollama import router as ollama_router
+from server.routes.test_db import router as test_db_router
+from server.routes.test_env import router as test_env_router
 
 app = FastAPI()
 
@@ -51,11 +57,19 @@ def read_root():
     logger.info("Root endpoint accessed.")
     return {"message": "FastAPI Document AI Server is running."}
 
-app.include_router(documents_router, prefix="/documents")
-app.include_router(query_router, prefix="/query")
-app.include_router(chat_router, prefix="/chat")
-app.include_router(admin_router, prefix="/admin")
-app.include_router(admin_documents_router, prefix="/admin/documents")
-app.include_router(categories_router, prefix="/categories")
-app.include_router(roles_router, prefix="/roles")
-app.include_router(users_router, prefix="/users")
+app.include_router(documents_router, prefix="/api/documents")
+app.include_router(query_router, prefix="/api/query")
+app.include_router(chat_router, prefix="/api/chat")
+app.include_router(admin_router, prefix="/api/admin")
+app.include_router(admin_documents_router, prefix="/api/admin/documents")
+app.include_router(categories_router, prefix="/api/categories")
+app.include_router(roles_router, prefix="/api/roles")
+app.include_router(users_router, prefix="/api/users")
+app.include_router(auth_router, prefix="/api/auth")
+app.include_router(audit_logs_router, prefix="/api/audit-logs")
+app.include_router(download_router, prefix="/api/download")
+app.include_router(ollama_router, prefix="/api/ollama")
+app.include_router(test_db_router, prefix="/api/test-db")
+app.include_router(test_env_router, prefix="/api/test-env")
+from server.routes.seed import router as seed_router
+app.include_router(seed_router, prefix="/api/seed")

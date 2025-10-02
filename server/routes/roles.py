@@ -2,6 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from server.middleware.auth import JWTBearer, require_permission
 from server.lib.mongodb import get_database
 import logging
+from datetime import datetime
+import asyncio
 
 router = APIRouter()
 
@@ -186,3 +188,46 @@ async def delete_role(
     except Exception as e:
         logger.error(f"Error deleting role: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to delete role: {str(e)}")
+
+@router.post("/recalculate-user-count")
+async def recalculate_user_count(user=Depends(require_permission("admin"))):
+    """
+    Recalculate user count for all roles
+    """
+    try:
+        db = await get_database()
+
+        # Get all roles
+        roles = await db.roles.find({}).to_list(length=None)
+
+        # Recalculate user count for each role
+        update_promises = []
+        for role in roles:
+            user_count = await db.users.count_documents({"roleId": role["_id"]})
+            update_promises.append(
+                db.roles.update_one(
+                    {"_id": role["_id"]},
+                    {"$set": {"userCount": user_count, "updatedAt": datetime.utcnow().isoformat()}}
+                )
+            )
+
+        # Wait for all updates to complete
+        await asyncio.gather(*update_promises)
+
+        # Get updated roles to return
+        updated_roles = await db.roles.find({}).to_list(length=None)
+
+        # Convert ObjectId to string
+        for role in updated_roles:
+            role["_id"] = str(role["_id"])
+
+        logger.info("User counts recalculated successfully")
+        return {
+            "success": True,
+            "message": "User counts recalculated successfully",
+            "roles": updated_roles
+        }
+
+    except Exception as e:
+        logger.error(f"Error recalculating user counts: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to recalculate user counts")

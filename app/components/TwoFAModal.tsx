@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState } from "react";
 import { useToast } from "@/hooks/use-toast";
+import { API_ENDPOINTS } from "@/lib/api";
 
 interface TwoFAModalProps {
   open: boolean;
@@ -31,7 +32,7 @@ const TwoFAModal = ({ open, onClose, onVerify, forgotToken }: TwoFAModalProps) =
     try {
       if (forgotToken) {
         // Forgot-password 2FA verification (no auth header)
-        response = await fetch('/api/auth/forgot-password/verify-2fa', {
+        response = await fetch(API_ENDPOINTS.auth.forgotPasswordVerify2FA, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
@@ -49,7 +50,7 @@ const TwoFAModal = ({ open, onClose, onVerify, forgotToken }: TwoFAModalProps) =
           });
           return;
         }
-        response = await fetch('/api/auth/verify/2fa', {
+        response = await fetch(API_ENDPOINTS.users.verify2FA, {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',

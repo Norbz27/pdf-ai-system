@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import {  User as UserIcon, Eye, EyeOff } from "lucide-react"
+import { API_ENDPOINTS } from "@/lib/api"
 import {
   Table,
   TableBody,
@@ -45,7 +46,6 @@ import {
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { useToast } from "@/hooks/use-toast"
-import axios from "axios"
 
 interface User {
   _id: string
@@ -162,7 +162,13 @@ export default function UsersPage() {
       if (selectedRole !== 'all') params.append('role', selectedRole)
       if (selectedStatus !== 'all') params.append('status', selectedStatus)
 
-      const response = await fetch(`/api/admin/users?${params.toString()}`)
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}?${params.toString()}`, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
       if (!response.ok) {
         throw new Error('Failed to fetch users')
       }
@@ -182,7 +188,13 @@ export default function UsersPage() {
 
   const fetchRoles = async () => {
     try {
-      const response = await fetch('/api/admin/roles')
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(API_ENDPOINTS.admin.roles, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
       if (!response.ok) {
         throw new Error('Failed to fetch roles')
       }
@@ -204,9 +216,11 @@ export default function UsersPage() {
         return
       }
 
-      const response = await fetch('/api/admin/users', {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(API_ENDPOINTS.admin.users, {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -267,9 +281,11 @@ export default function UsersPage() {
         return
       }
 
-      const response = await fetch(`/api/admin/users/${editingUser._id}`, {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${editingUser._id}`, {
         method: 'PUT',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -307,9 +323,11 @@ export default function UsersPage() {
     try {
       const newStatus = currentStatus === 'active' ? 'suspended' : 'active'
 
-      const response = await fetch(`/api/admin/users/${userId}`, {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${userId}`, {
         method: 'PATCH',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({ status: newStatus }),
@@ -339,8 +357,12 @@ export default function UsersPage() {
 
   const handleDeleteUser = async (userId: string) => {
     try {
-      const response = await fetch(`/api/admin/users/${userId}`, {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${userId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       })
 
       const data = await response.json()
@@ -381,14 +403,14 @@ export default function UsersPage() {
         return
       }
 
-      const response = await fetch(`/api/admin/users`, {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${resetPasswordUser._id}/reset-password`, {
         method: 'PATCH',
         headers: {
+          'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          userId: resetPasswordUser._id,
-          action: "reset_password",
           newPassword: newGeneratedPassword
         }),
       })
@@ -420,24 +442,60 @@ export default function UsersPage() {
 
   const handleResendVerification = async (userId: string) => {
     try {
-      await axios.patch("/api/admin/users", { userId, action: "resend_verification" });
-      toast({ title: "Verification email resent." });
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${userId}/resend-verification`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to resend verification')
+      }
+
+      toast({ title: "Success", description: "Verification email resent." });
     } catch (err) {
-      toast({ title: "Failed to resend verification", variant: "destructive" });
+      console.error('Error resending verification:', err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to resend verification",
+        variant: "destructive"
+      });
     }
   };
 
   const handleViewQrCode = async (userId: string, userEmail: string) => {
     try {
-      const response = await axios.patch("/api/admin/users", { userId, action: "view_qr_code" });
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.users}/${userId}/qr-code`, {
+        method: 'GET',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        throw new Error('Failed to load QR code')
+      }
+
+      const data = await response.json()
+
       setQrCodeData({
-        url: response.data.qrCodeUrl,
-        secret: response.data.twoFASecret,
+        url: data.qrCodeUrl,
+        secret: data.twoFASecret,
         email: userEmail
       });
       setIsQrDialogOpen(true);
     } catch (err) {
-      toast({ title: "Failed to load QR code", variant: "destructive" });
+      console.error('Error loading QR code:', err)
+      toast({
+        title: "Error",
+        description: err instanceof Error ? err.message : "Failed to load QR code",
+        variant: "destructive"
+      });
     }
   };
 

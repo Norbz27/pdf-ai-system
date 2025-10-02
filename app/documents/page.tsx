@@ -45,6 +45,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import ReactSelect from "react-select"
 import { listDocumentsWithFilters, getCategories, getRoles, getUsers, grantDocumentAccess, deleteDocument as deleteDocumentApi } from "@/lib/api-client";
+import { API_ENDPOINTS } from "@/lib/api";
 
 export default function Dashboard() {
   const { toast } = useToast()
@@ -148,7 +149,11 @@ export default function Dashboard() {
     }
     // Create a download link and trigger it
     const fileName = doc.name || "document.pdf";
-    fetch(`/api/download?filePath=${encodeURIComponent(doc.filePath)}&fileName=${encodeURIComponent(fileName)}`)
+    fetch(`${API_ENDPOINTS.download}?filePath=${encodeURIComponent(doc.filePath)}&fileName=${encodeURIComponent(fileName)}`, {
+      headers: {
+        'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+      },
+    })
       .then(res => {
         if (!res.ok) throw new Error("Failed to download file");
         return res.blob();
@@ -300,7 +305,7 @@ export default function Dashboard() {
                     onCheckedChange={async (checked) => {
                       try {
                         const token = localStorage.getItem('authToken') || undefined;
-                        await fetch(`/api/documents/${managingAccessDoc._id}/access/public`, {
+                        await fetch(API_ENDPOINTS.documents.publicAccess(managingAccessDoc._id), {
                           method: 'POST',
                           headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                           body: JSON.stringify({ publicAccess: checked }),

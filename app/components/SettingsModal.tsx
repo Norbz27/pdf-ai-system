@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch"
 import { Alert, AlertDescription } from "@/components/ui/alert"
 import { Loader2 } from "lucide-react"
 import { useToast } from "@/hooks/use-toast"
+import { API_ENDPOINTS } from "@/lib/api"
 
 interface SettingsModalProps {
   isOpen: boolean
@@ -41,7 +42,11 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const loadCurrentSettings = async () => {
     try {
       const token = localStorage.getItem('authToken')
-      const response = await fetch('/api/users/settings', {
+      if (!token) {
+        setError("Please log in again.")
+        return
+      }
+      const response = await fetch(API_ENDPOINTS.users.settings, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -49,9 +54,19 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       })
 
       const data = await response.json()
+      console.log("User settings data received:", data)
 
       if (response.ok) {
-        setTwoFactorEnabled(data.twoFAEnabled || false)
+        // Fix: Ensure twoFAEnabled is boolean and update state accordingly
+        setTwoFactorEnabled(Boolean(data.twoFAEnabled))
+      } else {
+        if (response.status === 403) {
+          setError("Authentication required. Please log in again.")
+        } else if (response.status === 401) {
+          setError("Token expired. Please log in again.")
+        } else {
+          console.error('Error loading settings:', data)
+        }
       }
     } catch (error) {
       console.error('Error loading settings:', error)
@@ -61,10 +76,15 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
   const handle2FAToggle = async (enabled: boolean) => {
     setError("")
 
+    const token = localStorage.getItem('authToken')
+    if (!token) {
+      setError("Please log in again.")
+      return
+    }
+
     if (enabled) {
       // Check if user previously had 2FA enabled (re-enabling)
-      const token = localStorage.getItem('authToken')
-      const settingsResponse = await fetch('/api/users/settings', {
+      const settingsResponse = await fetch(API_ENDPOINTS.users.settings, {
         method: 'GET',
         headers: {
           'Authorization': `Bearer ${token}`
@@ -72,12 +92,23 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       })
       const settingsData = await settingsResponse.json()
 
+      if (!settingsResponse.ok) {
+        if (settingsResponse.status === 403) {
+          setError("Authentication required. Please log in again.")
+        } else if (settingsResponse.status === 401) {
+          setError("Token expired. Please log in again.")
+        } else {
+          setError("Failed to load settings.")
+        }
+        return
+      }
+
       setIsReEnabling(settingsData.twoFASecret ? true : false)
 
       // Enable 2FA - show setup
       setIsLoading(true)
       try {
-        const response = await fetch('/api/users/settings', {
+        const response = await fetch(API_ENDPOINTS.users.settings, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -95,11 +126,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           setShowSetup2FA(true)
           setTwoFactorEnabled(false) // Keep as false until verified
         } else {
-          throw new Error(data.error || 'Failed to enable 2FA')
+          if (response.status === 403) {
+            setError("Authentication required. Please log in again.")
+          } else if (response.status === 401) {
+            setError("Token expired. Please log in again.")
+          } else {
+            setError(data.error || 'Failed to enable 2FA')
+          }
         }
       } catch (error) {
         console.error('Error enabling 2FA:', error)
-        setError(error instanceof Error ? error.message : "Failed to enable 2FA")
+        setError("Failed to enable 2FA")
         setTwoFactorEnabled(false)
       } finally {
         setIsLoading(false)
@@ -108,8 +145,7 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
       // Disable 2FA
       setIsLoading(true)
       try {
-        const token = localStorage.getItem('authToken')
-        const response = await fetch('/api/users/settings', {
+        const response = await fetch(API_ENDPOINTS.users.settings, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',
@@ -133,11 +169,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
             description: "Two-factor authentication has been disabled.",
           })
         } else {
-          throw new Error(data.error || 'Failed to disable 2FA')
+          if (response.status === 403) {
+            setError("Authentication required. Please log in again.")
+          } else if (response.status === 401) {
+            setError("Token expired. Please log in again.")
+          } else {
+            setError(data.error || 'Failed to disable 2FA')
+          }
         }
       } catch (error) {
         console.error('Error disabling 2FA:', error)
-        setError(error instanceof Error ? error.message : "Failed to disable 2FA")
+        setError("Failed to disable 2FA")
         setTwoFactorEnabled(true)
       } finally {
         setIsLoading(false)
@@ -153,9 +195,16 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
 
     setIsLoading(true)
     setError("") // Clear any previous errors
+
+    const token = localStorage.getItem('authToken')
+    if (!token) {
+      setError("Please log in again.")
+      setIsLoading(false)
+      return
+    }
+
     try {
-      const token = localStorage.getItem('authToken')
-      const response = await fetch('/api/users/verify-2fa', {
+      const response = await fetch(API_ENDPOINTS.users.verify2FA, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -179,11 +228,17 @@ export default function SettingsModal({ isOpen, onClose }: SettingsModalProps) {
           description: "Two-factor authentication has been successfully enabled.",
         })
       } else {
-        throw new Error(data.error || 'Invalid verification code')
+        if (response.status === 403) {
+          setError("Authentication required. Please log in again.")
+        } else if (response.status === 401) {
+          setError("Token expired. Please log in again.")
+        } else {
+          setError(data.error || 'Invalid verification code')
+        }
       }
     } catch (error) {
       console.error('Error verifying 2FA:', error)
-      setError(error instanceof Error ? error.message : "Invalid verification code")
+      setError("Invalid verification code")
     } finally {
       setIsLoading(false)
     }

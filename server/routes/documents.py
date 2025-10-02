@@ -19,6 +19,9 @@ async def process_pdf(file_path, file_name, category_id, description, uploaded_b
     try:
         docs, metadata = load_pdf(file_path)
         logger.info(f"Loaded PDF: {len(docs)} pages")
+        # Add document_id to metadata for FAISS indexing
+        for doc in docs:
+            doc.metadata['doc_id'] = document_id
         vector_store = await index_documents(docs)
         logger.info("Indexed documents in FAISS")
         chunks = [DocumentChunk(

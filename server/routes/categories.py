@@ -12,37 +12,43 @@ logger = logging.getLogger(__name__)
 @router.get("/")
 async def get_categories(request: Request):
     """
-    Get all categories
+    Get all categories with document count
     """
     try:
         logger.info("Categories endpoint accessed")
-        logger.info(f"Request headers: {dict(request.headers)}")
-
-        # Check if Authorization header exists
-        auth_header = request.headers.get("Authorization")
-        if auth_header:
-            logger.info(f"Authorization header found: {auth_header[:20]}...")
-        else:
-            logger.warning("No Authorization header found")
-
-        # Try to get user from JWT token
-        try:
-            credentials = await JWTBearer().__call__(request)
-            user = credentials
-            logger.info(f"User authenticated: {user.get('sub', 'unknown')}")
-        except HTTPException as e:
-            logger.warning(f"Authentication failed: {e.detail}")
-            # For now, allow access without authentication for debugging
-            user = {"sub": "anonymous", "permissions": ["user_page_access"]}
 
         db = await get_database()
-        categories = await db.categories.find({}).sort("name", 1).to_list(None)
+
+        # Aggregate to get document count for each category
+        pipeline = [
+            {
+                "$lookup": {
+                    "from": "documents",
+                    "localField": "_id",
+                    "foreignField": "categoryId",
+                    "as": "documents"
+                }
+            },
+            {
+                "$addFields": {
+                    "documentCount": {"$size": "$documents"}
+                }
+            },
+            {
+                "$project": {
+                    "documents": 0
+                }
+            },
+            {"$sort": {"createdAt": -1}}
+        ]
+
+        categories = await db.categories.aggregate(pipeline).to_list(length=None)
 
         # Convert ObjectId to string for JSON serialization
         for category in categories:
             category["_id"] = str(category["_id"])
 
-        logger.info(f"Retrieved {len(categories)} categories")
+        logger.info(f"Retrieved {len(categories)} categories with document counts")
         return {"categories": categories}
 
     except Exception as e:

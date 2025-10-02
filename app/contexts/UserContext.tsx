@@ -3,6 +3,7 @@
 import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import { setToken } from "@/lib/api-client";
+import { API_ENDPOINTS } from "@/lib/api";
 
 export interface User {
   _id: string
@@ -62,7 +63,7 @@ export function UserProvider({ children }: { children: ReactNode }) {
         if (token) {
           // Try to verify token with backend
           try {
-            const response = await fetch('/api/auth/verify', {
+            const response = await fetch(API_ENDPOINTS.auth.verify, {
               method: 'GET',
               headers: {
                 'Authorization': `Bearer ${token}`

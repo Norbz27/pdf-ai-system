@@ -41,6 +41,7 @@ import {
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { useToast } from "@/hooks/use-toast"
+import { API_ENDPOINTS } from "@/lib/api"
 
 interface Role {
   _id: string
@@ -94,16 +95,26 @@ export default function RolesPage() {
       setLoading(true)
 
       // First recalculate user counts to ensure accuracy
-      await fetch('/api/admin/roles/recalculate-user-count', {
+      const token = localStorage.getItem('authToken')
+      const response = await fetch(`${API_ENDPOINTS.admin.roles}/recalculate-user-count`, {
         method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
       })
-
-      // Then fetch the updated roles
-      const response = await fetch('/api/admin/roles')
       if (!response.ok) {
+        throw new Error('Failed to recalculate user counts')
+      }
+
+      const rolesResponse = await fetch(API_ENDPOINTS.admin.roles, {
+        headers: {
+          'Authorization': `Bearer ${token}`,
+        },
+      })
+      if (!rolesResponse.ok) {
         throw new Error('Failed to fetch roles')
       }
-      const data = await response.json()
+      const data = await rolesResponse.json()
       setRoles(data.roles || [])
     } catch (error) {
       console.error('Error fetching roles:', error)
@@ -131,6 +142,7 @@ export default function RolesPage() {
       const response = await fetch('/api/admin/roles', {
         method: 'POST',
         headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(newRole),
@@ -179,6 +191,7 @@ export default function RolesPage() {
       const response = await fetch(`/api/admin/roles/${editingRole._id}`, {
         method: 'PUT',
         headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
@@ -216,6 +229,9 @@ export default function RolesPage() {
     try {
       const response = await fetch(`/api/admin/roles/${roleId}`, {
         method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${localStorage.getItem('authToken')}`,
+        },
       })
 
       const data = await response.json()
