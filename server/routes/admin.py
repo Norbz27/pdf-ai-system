@@ -18,7 +18,7 @@ async def get_audit_logs(user=Depends(require_permission("admin"))):
     return {"logs": []}
 
 @router.get("/dashboard")
-async def get_dashboard_stats(user=Depends(require_permission("admin"))):
+async def get_dashboard_stats(user=Depends(require_permission("admin_access"))):
     """
     Get dashboard statistics for admin
     """
@@ -89,7 +89,8 @@ async def get_dashboard_stats(user=Depends(require_permission("admin"))):
         thirty_days_ago = now - timedelta(days=30)
         upload_trends_pipeline = [
             {"$match": {"createdAt": {"$gte": thirty_days_ago.isoformat()}}},
-            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$createdAt"}}, "count": {"$sum": 1}}},
+            {"$addFields": {"createdAtDate": {"$dateFromString": {"dateString": "$createdAt"}}}},
+            {"$group": {"_id": {"$dateToString": {"format": "%Y-%m-%d", "date": "$createdAtDate"}}, "count": {"$sum": 1}}},
             {"$sort": {"_id": 1}}
         ]
         upload_trends = await db.documents.aggregate(upload_trends_pipeline).to_list(length=None)

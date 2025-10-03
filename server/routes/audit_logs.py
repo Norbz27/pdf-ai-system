@@ -100,7 +100,7 @@ async def get_audit_logs(
         total = await db["auditlogs"].count_documents(filter_query)
 
         # Get paginated results
-        logs = await db["auditlogs"].find(filter_query).sort("createdAt", -1).skip((page - 1) * limit).limit(limit).to_array(length=None)
+        logs = await db["auditlogs"].find(filter_query).sort("createdAt", -1).skip((page - 1) * limit).limit(limit).to_list(length=None)
 
         total_pages = (total + limit - 1) // limit
 
@@ -177,7 +177,7 @@ async def export_audit_logs(request: Request):
             ]
 
         # Get all matching logs
-        logs = await db["auditlogs"].find(filter_query).sort("createdAt", -1).to_array(length=None)
+        logs = await db["auditlogs"].find(filter_query).sort("createdAt", -1).to_list(length=None)
 
         # Convert to CSV
         output = io.StringIO()

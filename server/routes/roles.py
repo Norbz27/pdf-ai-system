@@ -190,7 +190,7 @@ async def delete_role(
         raise HTTPException(status_code=500, detail=f"Failed to delete role: {str(e)}")
 
 @router.post("/recalculate-user-count")
-async def recalculate_user_count(user=Depends(require_permission("admin"))):
+async def recalculate_user_count(user=Depends(require_permission("admin_access"))):
     """
     Recalculate user count for all roles
     """

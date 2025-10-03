@@ -9,7 +9,7 @@ payload = {
     "sub": "testuser",
     "userId": "507f1f77bcf86cd799439011",  # Example ObjectId
     "permissions": ["user_page_access", "chat"],
-    "exp": datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(hours=1)
+    "exp": datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(hours=1)  # Expired token
 }
 
 # Generate JWT token

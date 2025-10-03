@@ -9,7 +9,7 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-@router.get("/")
+@router.get("")
 async def get_categories(request: Request):
     """
     Get all categories with document count

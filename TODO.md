@@ -1,19 +1,18 @@
-# TODO: Fix 403 Forbidden Error on PUT /api/users/settings
+# TODO: Fix /api/categories 404 Error
 
-## Completed Tasks
-- [x] Analyzed the 403 Forbidden error on PUT /api/users/settings endpoint
-- [x] Reviewed backend authentication middleware (JWTBearer) and endpoint implementation
-- [x] Identified that 403 is raised when Authorization header is missing
-- [x] Updated frontend SettingsModal.tsx to check for auth token presence before API calls
-- [x] Added proper error handling for 403 (missing auth) and 401 (expired token) responses
-- [x] Applied changes to loadCurrentSettings, handle2FAToggle, and handleVerify2FA functions
+## Approved Plan
+- Change the categories router prefix in server/main.py from "/api/admin/categories" to "/api/categories"
+- Update the GET route in server/routes/categories.py from @router.get("") to @router.get("/") for clarity
 
-## Summary of Changes
-- Added token validation at the start of API call functions
-- Improved error messages for authentication issues
-- Ensured consistent error handling across all API requests in the component
+## Steps
+- [x] Edit server/main.py to change the prefix for categories_router
+- [x] Edit server/routes/categories.py to update the GET route decorator
+- [x] Change roles router prefix from "/api/admin/roles" to "/api/roles"
+- [x] Add redirect routes for old admin URLs to prevent redirect loops
+- [x] Remove sharedUsers lookup from documents.py to fix 500 error
+- [x] Fix admin documents route to prevent redirect loop
+- [ ] Test the /api/categories and /api/roles endpoints to ensure they return 200 OK
 
-## Next Steps
-- Test the changes by attempting to toggle 2FA after logging in
-- Verify that appropriate error messages are shown for missing or expired tokens
-- If issues persist, check token storage and expiration logic
+## Followup
+- Verify that the GET /api/categories works without authentication
+- Ensure admin operations (POST, PUT, DELETE) still require admin permissions

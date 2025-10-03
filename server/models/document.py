@@ -6,7 +6,7 @@ class DocumentChunk(BaseModel):
     text: str
     chunkIndex: int
     page: int
-    section: int
+    section: str
     embedding: Optional[list]
 
 class AccessGrant(BaseModel):

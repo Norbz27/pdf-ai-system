@@ -33,7 +33,7 @@ def serialize_user(user_item):
         logger.warning(f"Error serializing user: {str(e)}")
         return None
 
-@router.get("/")
+@router.get("")
 async def get_users(request: Request):
     """
     Get all users

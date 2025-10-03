@@ -44,7 +44,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 import ReactSelect from "react-select"
-import { listDocumentsWithFilters, getCategories, getRoles, getUsers, grantDocumentAccess, deleteDocument as deleteDocumentApi } from "@/lib/api-client";
+import { listDocumentsWithFilters, getCategories, getRoles, getUsers, grantDocumentAccess, deleteDocument as deleteDocumentApi, reprocessDocument } from "@/lib/api-client";
 import { API_ENDPOINTS } from "@/lib/api";
 
 export default function Dashboard() {
@@ -66,6 +66,8 @@ export default function Dashboard() {
   const [roles, setRoles] = useState<any[]>([]);
   const [users, setUsers] = useState<any[]>([]);
   const [docToDelete, setDocToDelete] = useState<any | null>(null);
+  const [docToReprocess, setDocToReprocess] = useState<any | null>(null);
+  const [isReprocessing, setIsReprocessing] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -205,6 +207,35 @@ export default function Dashboard() {
         description: 'Error adding access',
         variant: "destructive"
       });
+    }
+  };
+
+  // Handler for reprocessing a document
+  const handleReprocess = async (doc: any) => {
+    setIsReprocessing(true);
+    // Show loading toast
+    toast({
+      title: "Processing",
+      description: "Document reprocessing started...",
+    });
+
+    try {
+      const token = localStorage.getItem('authToken') || undefined;
+      await reprocessDocument(doc._id, token);
+      toast({
+        title: "Success",
+        description: "Document reprocessing completed",
+      });
+      // Update status to processing
+      setDocuments((prev) => prev.map((d) => d._id === doc._id ? { ...d, status: "processing" } : d));
+    } catch (err: any) {
+      toast({
+        title: "Error",
+        description: err.message || "Failed to reprocess document",
+        variant: "destructive"
+      });
+    } finally {
+      setIsReprocessing(false);
     }
   };
 
@@ -596,6 +627,12 @@ export default function Dashboard() {
                               Download
                             </DropdownMenuItem>
                               {doc.uploadedBy?.toString() === user?._id && (
+                                <DropdownMenuItem onClick={() => setDocToReprocess(doc)}>
+                                  <Settings className="h-4 w-4 mr-2" />
+                                  Reprocess
+                                </DropdownMenuItem>
+                              )}
+                              {doc.uploadedBy?.toString() === user?._id && (
                                 <DropdownMenuItem onClick={() => handleManageAccess(doc)}>
                                   <Key className="h-4 w-4 mr-2" />
                                   Manage Access
@@ -643,6 +680,37 @@ export default function Dashboard() {
                 }}
               >
                 Delete
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
+        {/* Reprocess Confirmation Modal */}
+        <Dialog open={!!docToReprocess} onOpenChange={() => setDocToReprocess(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Reprocess Document</DialogTitle>
+              <DialogDescription>
+                This will re-extract information from the document and update its content.
+                The document will be temporarily unavailable during processing.
+                <br />
+                <span className="font-bold">Document: {docToReprocess?.name}</span>
+              </DialogDescription>
+            </DialogHeader>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setDocToReprocess(null)}>
+                Cancel
+              </Button>
+              <Button
+                onClick={async () => {
+                  if (docToReprocess) {
+                    await handleReprocess(docToReprocess);
+                    setDocToReprocess(null);
+                  }
+                }}
+                disabled={isReprocessing}
+              >
+                {isReprocessing ? "Reprocessing..." : "Reprocess"}
               </Button>
             </DialogFooter>
           </DialogContent>

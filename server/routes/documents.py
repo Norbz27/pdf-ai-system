@@ -28,7 +28,7 @@ async def process_pdf(file_path, file_name, category_id, description, uploaded_b
             text=doc.page_content,
             chunkIndex=i,
             page=doc.metadata.get('page', 1),
-            section=doc.metadata.get('section', 1),
+            section=doc.metadata.get('section', ''),
             embedding=None
         ).dict() for i, doc in enumerate(docs)]
         logger.info(f"Created {len(chunks)} chunks")
@@ -149,14 +149,7 @@ async def get_document(
                     "preserveNullAndEmptyArrays": True
                 }
             },
-            {
-                "$lookup": {
-                    "from": "users",
-                    "localField": "sharedWith",
-                    "foreignField": "_id",
-                    "as": "sharedUsers"
-                }
-            },
+
             {
                 "$project": {
                     "_id": 1,
@@ -530,6 +523,58 @@ async def toggle_public_access(document_id: str, payload: dict, request: Request
     except Exception as e:
         logger.error(f"Error toggling public access for document {document_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to toggle public access: {str(e)}")
+
+
+@router.post("/{document_id}/reprocess")
+async def reprocess_document(
+    document_id: str,
+    background_tasks: BackgroundTasks,
+    request: Request
+):
+    """
+    Reprocess a document by re-running the PDF processing pipeline.
+    """
+    try:
+        logger.info(f"Reprocessing document {document_id}")
+
+        db = await get_database()
+
+        # Validate document exists
+        doc = await db["documents"].find_one({"_id": ObjectId(document_id)})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Check if file exists
+        if not os.path.exists(doc["filePath"]):
+            raise HTTPException(status_code=400, detail="Document file not found")
+
+        # Set status to processing
+        await db["documents"].update_one(
+            {"_id": ObjectId(document_id)},
+            {"$set": {"status": "processing", "updatedAt": datetime.utcnow().isoformat()}}
+        )
+
+        # Extract metadata for process_pdf
+        file_path = doc["filePath"]
+        file_name = doc["name"]
+        category_id = str(doc["categoryId"])
+        description = doc.get("description", "")
+        uploaded_by = str(doc["uploadedBy"])
+        ip_address = "reprocess"  # Placeholder
+        user_agent = "reprocess"  # Placeholder
+
+        background_tasks.add_task(
+            process_pdf, file_path, file_name, category_id, description, uploaded_by, ip_address, user_agent, document_id
+        )
+
+        logger.info(f"Reprocessing started for document {document_id}")
+        return {"message": "Document reprocessing started"}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error reprocessing document {document_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to reprocess document: {str(e)}")
 
 
 @router.delete("/{document_id}")

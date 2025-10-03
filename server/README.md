@@ -53,3 +53,7 @@ Then update components already wired to `lib/api-client.js`.
 - Document processing: PyPDFLoader -> chunking -> FAISS per document.
 - Chat: retrieval from FAISS + Ollama. WebSocket streaming at `/ws/chat`.
 - Caching: Redis optional; if `REDIS_URL` unset, caching is skipped. 
+
+
+# Start Server
+uvicorn server.main:app --reload --host 0.0.0.0 --port 8000   

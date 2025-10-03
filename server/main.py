@@ -1,10 +1,12 @@
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from contextlib import asynccontextmanager
+import asyncio
 from server.config import settings
 from server.middleware.logger import RequestLoggerMiddleware
 from server.middleware.audit_logger import AuditLoggerMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi import APIRouter
 from server.routes.documents import router as documents_router
 from server.routes.query import router as query_router
@@ -21,7 +23,18 @@ from server.routes.ollama import router as ollama_router
 from server.routes.test_db import router as test_db_router
 from server.routes.test_env import router as test_env_router
 
-app = FastAPI()
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    logger.info("Starting up the FastAPI Document AI Server...")
+    try:
+        yield
+    except asyncio.CancelledError:
+        logger.info("Server shutdown initiated...")
+        # Suppress the CancelledError to prevent it from propagating
+    finally:
+        logger.info("Shutting down the FastAPI Document AI Server...")
+
+app = FastAPI(lifespan=lifespan)
 
 # CORS Middleware
 app.add_middleware(
@@ -57,14 +70,25 @@ def read_root():
     logger.info("Root endpoint accessed.")
     return {"message": "FastAPI Document AI Server is running."}
 
+@app.get("/api/admin/categories")
+async def redirect_categories():
+    return RedirectResponse(url="/api/categories", status_code=302)
+
+@app.get("/api/admin/roles")
+async def redirect_roles():
+    return RedirectResponse(url="/api/roles", status_code=302)
+
 app.include_router(documents_router, prefix="/api/documents")
 app.include_router(query_router, prefix="/api/query")
 app.include_router(chat_router, prefix="/api/chat")
-app.include_router(admin_router, prefix="/api/admin")
 app.include_router(admin_documents_router, prefix="/api/admin/documents")
+app.include_router(categories_router, prefix="/api/admin/categories")
 app.include_router(categories_router, prefix="/api/categories")
+app.include_router(roles_router, prefix="/api/admin/roles")
 app.include_router(roles_router, prefix="/api/roles")
+app.include_router(users_router, prefix="/api/admin/users")
 app.include_router(users_router, prefix="/api/users")
+app.include_router(admin_router, prefix="/api/admin")
 app.include_router(auth_router, prefix="/api/auth")
 app.include_router(audit_logs_router, prefix="/api/audit-logs")
 app.include_router(download_router, prefix="/api/download")
