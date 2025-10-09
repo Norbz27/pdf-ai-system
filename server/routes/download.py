@@ -1,40 +1,39 @@
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Query, HTTPException, status
 from fastapi.responses import FileResponse
 import os
 import logging
 
 router = APIRouter()
-
 logger = logging.getLogger(__name__)
+
+# Define the absolute path to the 'uploads' directory at the module level
+# This ensures it's calculated correctly relative to the project root
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..'))
+UPLOAD_DIR = os.path.join(PROJECT_ROOT, "uploads")
 
 @router.get("")
 async def download_file(
-    file_path: str = Query(..., description="Path to the file to download"),
-    file_name: str = Query("document.pdf", description="Name for the downloaded file")
+    filePath: str = Query(..., description="The URL path of the file to download, e.g., /uploads/document.pdf"),
+    fileName: str = Query(..., description="The desired name for the downloaded file")
 ):
+    """
+    Safely downloads a file from the server's upload directory.
+    """
     try:
-        if not file_path:
-            raise HTTPException(status_code=400, detail="Missing filePath")
+        # Sanitize the filePath to get just the filename
+        # This prevents path traversal attacks (e.g., ../../.../somefile)
+        base_name = os.path.basename(filePath)
+        
+        # Construct the full, absolute path to the file on the server
+        full_path = os.path.join(UPLOAD_DIR, base_name)
 
-        # Ensure the path is absolute or resolve relative to cwd
-        if not os.path.isabs(file_path):
-            abs_path = os.path.join(os.getcwd(), file_path)
-        else:
-            abs_path = file_path
+        if not os.path.exists(full_path) or not os.path.isfile(full_path):
+            logger.warning(f"Download attempt for non-existent file: {full_path}")
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="File not found")
 
-        # Check if file exists
-        if not os.path.exists(abs_path):
-            raise HTTPException(status_code=404, detail="File not found")
+        logger.info(f"Serving file for download: {full_path}")
+        return FileResponse(path=full_path, filename=fileName, media_type='application/octet-stream')
 
-        # Return file response
-        return FileResponse(
-            path=abs_path,
-            media_type="application/pdf",
-            filename=file_name
-        )
-
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Download error: {e}")
-        raise HTTPException(status_code=500, detail="Server error")
+        logger.error(f"Error during file download for '{fileName}': {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Could not process file download.")

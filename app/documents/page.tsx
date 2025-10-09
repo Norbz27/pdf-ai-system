@@ -43,9 +43,9 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
-import ReactSelect from "react-select"
+import ReactSelect from "react-select";
 import { listDocumentsWithFilters, getCategories, getRoles, getUsers, grantDocumentAccess, deleteDocument as deleteDocumentApi, reprocessDocument } from "@/lib/api-client";
-import { API_ENDPOINTS } from "@/lib/api";
+import { API_ENDPOINTS, API_BASE_URL } from "@/lib/api";
 
 export default function Dashboard() {
   const { toast } = useToast()
@@ -68,6 +68,7 @@ export default function Dashboard() {
   const [docToDelete, setDocToDelete] = useState<any | null>(null);
   const [docToReprocess, setDocToReprocess] = useState<any | null>(null);
   const [isReprocessing, setIsReprocessing] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     const fetchData = async () => {
@@ -241,6 +242,7 @@ export default function Dashboard() {
 
   // Handler for deleting a document
   const handleDelete = async (doc: any) => {
+    setIsDeleting(true);
     try {
       await deleteDocumentApi(doc._id);
       setDocuments((prev) => prev.filter((d) => d._id !== doc._id));
@@ -254,6 +256,8 @@ export default function Dashboard() {
         description: err.message || "Failed to delete document",
         variant: "destructive"
       });
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -269,7 +273,7 @@ export default function Dashboard() {
           {viewingDoc?.filePath ? (
             <div style={{ width: '100%', height: '70vh' }}>
               <iframe
-                src={`/pdfjs/web/viewer.html?file=/uploads/${encodeURIComponent(viewingDoc.name)}#view=page&sidebar=0`}
+                src={`${API_BASE_URL}/pdfjs/web/viewer.html?file=${encodeURIComponent(viewingDoc.filePath)}`}
                 title={viewingDoc.name}
                 width="100%"
                 height="100%"
@@ -678,8 +682,9 @@ export default function Dashboard() {
                     setDocToDelete(null);
                   }
                 }}
+                disabled={isDeleting}
               >
-                Delete
+                {isDeleting ? "Deleting..." : "Delete"}
               </Button>
             </DialogFooter>
           </DialogContent>

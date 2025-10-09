@@ -55,10 +55,10 @@ async def get_categories(request: Request):
         logger.error(f"Error fetching categories: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Failed to fetch categories: {str(e)}")
 
-@router.post("/")
+@router.post("")
 async def create_category(
     category_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Create a new category
@@ -71,13 +71,14 @@ async def create_category(
         if existing:
             raise HTTPException(status_code=400, detail="Category with this name already exists")
 
+        from datetime import datetime
         # Insert new category
         result = await db.categories.insert_one({
             "name": category_data.get("name"),
             "description": category_data.get("description", ""),
             "color": category_data.get("color", "#3B82F6"),  # Default blue color
-            "created_at": category_data.get("created_at"),
-            "updated_at": category_data.get("updated_at")
+            "createdAt": category_data.get("createdAt", datetime.utcnow().isoformat()),
+            "updatedAt": category_data.get("updatedAt", datetime.utcnow().isoformat())
         })
 
         if result.inserted_id:
@@ -98,7 +99,7 @@ async def create_category(
 async def update_category(
     category_id: str,
     category_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Update an existing category
@@ -128,7 +129,7 @@ async def update_category(
             "name": category_data.get("name"),
             "description": category_data.get("description", ""),
             "color": category_data.get("color", "#3B82F6"),
-            "updated_at": category_data.get("updated_at")
+            "updatedAt": category_data.get("updatedAt")
         }
 
         result = await db.categories.update_one(
@@ -153,7 +154,7 @@ async def update_category(
 @router.delete("/{category_id}")
 async def delete_category(
     category_id: str,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Delete a category

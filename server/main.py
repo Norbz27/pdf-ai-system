@@ -1,12 +1,14 @@
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI, Request, status, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import logging
+from fastapi.staticfiles import StaticFiles
+import os, anyio
 from contextlib import asynccontextmanager
 import asyncio
 from server.config import settings
 from server.middleware.logger import RequestLoggerMiddleware
 from server.middleware.audit_logger import AuditLoggerMiddleware
-from fastapi.responses import JSONResponse, RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse, FileResponse
 from fastapi import APIRouter
 from server.routes.documents import router as documents_router
 from server.routes.query import router as query_router
@@ -22,6 +24,9 @@ from server.routes.download import router as download_router
 from server.routes.ollama import router as ollama_router
 from server.routes.test_db import router as test_db_router
 from server.routes.test_env import router as test_env_router
+
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,6 +49,34 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Custom route to serve static files from the 'uploads' directory with CORS headers
+@app.get("/uploads/{file_path:path}")
+async def serve_upload_file(file_path: str, request: Request):
+    file_full_path = os.path.join(UPLOAD_DIR, file_path)
+    
+    # Security: Ensure the path is within the UPLOAD_DIR
+    if not os.path.abspath(file_full_path).startswith(os.path.abspath(UPLOAD_DIR)):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        # Check if file exists and is a file
+        file_info = await anyio.to_thread.run_sync(os.stat, file_full_path)
+        if not file_info or not os.path.isfile(file_full_path):
+            raise FileNotFoundError
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    # Manually set CORS headers to ensure pdf.js can access the file
+    response = FileResponse(file_full_path)
+    origin = request.headers.get('origin')
+    if origin in ["http://192.168.0.150:3000", "http://localhost:3000"]:
+        response.headers["Access-Control-Allow-Origin"] = origin
+        response.headers["Access-Control-Allow-Credentials"] = "true"
+        # pdf.js might need this for range requests (e.g., for large PDFs)
+        response.headers["Access-Control-Expose-Headers"] = "Content-Length, Content-Range"
+
+    return response
 
 app.add_middleware(RequestLoggerMiddleware)
 app.add_middleware(AuditLoggerMiddleware)
@@ -77,6 +110,9 @@ async def redirect_categories():
 @app.get("/api/admin/roles")
 async def redirect_roles():
     return RedirectResponse(url="/api/roles", status_code=302)
+
+# Mount PDF.js static files
+app.mount("/pdfjs", StaticFiles(directory="public/pdfjs"), name="pdfjs")
 
 app.include_router(documents_router, prefix="/api/documents")
 app.include_router(query_router, prefix="/api/query")

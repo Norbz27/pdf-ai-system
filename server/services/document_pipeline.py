@@ -267,9 +267,13 @@ import pytesseract
 from PIL import Image
 import fitz  # PyMuPDF
 
+import logging
+
 def ocr_pdf(file_path: str):
     """
     Perform OCR on each page of the PDF and return list of Documents with page content and metadata.
+    Uses docTR OCR as primary method.
+    If 'text' key is missing or empty in docTR output, fallback to image-based OCR on that page using pytesseract.
     """
     docs = []
     if DOCTR_AVAILABLE:
@@ -278,11 +282,31 @@ def ocr_pdf(file_path: str):
         doc = DocumentFile.from_pdf(file_path)
         result = model(doc)
         for page_num, page in enumerate(result.pages):
-            text = page.export()['text']
+            export_data = page.export()
+            text = export_data.get('text', '')
+            if not text.strip():
+                logging.info(f"OCR fallback triggered for page {page_num} due to empty text.")
+                # Fallback to image-based OCR for this page
+                try:
+                    import fitz
+                    pix = None
+                    pdf_doc = fitz.open(file_path)
+                    if page_num < len(pdf_doc):
+                        page_fitz = pdf_doc.load_page(page_num)
+                        pix = page_fitz.get_pixmap()
+                    if pix:
+                        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+                        text = pytesseract.image_to_string(img)
+                        logging.info(f"OCR fallback successful for page {page_num}, extracted {len(text)} characters.")
+                    else:
+                        logging.warning(f"Could not load page {page_num} image for OCR fallback.")
+                except Exception as e:
+                    logging.error(f"OCR fallback failed on page {page_num}: {e}")
             metadata = {"page": page_num + 1, "source": file_path}
             docs.append(Document(page_content=text, metadata=metadata))
     else:
-        # Fallback to pytesseract
+        # Fallback to pytesseract for full document
+        import fitz
         doc = fitz.open(file_path)
         for page_num in range(len(doc)):
             page = doc.load_page(page_num)
@@ -726,6 +750,7 @@ def dynamic_extract_pdf(file_path: str) -> list[Document]:
 def load_pdf(file_path: str):
     """
     Load PDF with hybrid extraction: Unstructured.io first, selective docTR fallback for low-quality pages.
+    Returns docs, metadata where metadata includes num_pages.
     """
     # Try Unstructured first
     unstructured_result = load_pdf_with_unstructured(file_path)
@@ -768,9 +793,19 @@ def load_pdf(file_path: str):
             if "heading" not in doc.metadata:
                 doc.metadata["heading"] = ""
 
-        return final_docs
+        # Fix multiline URLs
+        for doc in final_docs:
+            doc.page_content = fix_multiline_urls(doc.page_content)
+
+        metadata = {"num_pages": total_pages}
+        return final_docs, metadata
 
     # Full fallback if Unstructured failed
+    import fitz
+    pdf_doc = fitz.open(file_path)
+    total_pages = len(pdf_doc)
+    pdf_doc.close()
+
     try:
         loader = PyPDFLoader(file_path)
         docs = loader.load()
@@ -797,21 +832,27 @@ def load_pdf(file_path: str):
         preprocessed_text = preprocess_tables_in_text(augmented_content)
         preprocessed_text = preprocess_lists_in_text(preprocessed_text)
         headers = extract_headers(preprocessed_text)
-        metadata = doc.metadata.copy() if doc.metadata else {}
-        if "page" not in metadata:
-            metadata["page"] = page_num
-        if "source" not in metadata:
-            metadata["source"] = file_path
-        if "type" not in metadata:
-            metadata["type"] = "text"
-        if "section" not in metadata:
-            metadata["section"] = ""
-        if "heading" not in metadata:
-            metadata["heading"] = ""
-        metadata["headers"] = headers
-        metadata["extraction_method"] = metadata.get("extraction_method", "fallback")
-        docs[i] = doc.copy(update={"page_content": preprocessed_text, "metadata": metadata})
-    return docs
+        doc_metadata = doc.metadata.copy() if doc.metadata else {}
+        if "page" not in doc_metadata:
+            doc_metadata["page"] = page_num
+        if "source" not in doc_metadata:
+            doc_metadata["source"] = file_path
+        if "type" not in doc_metadata:
+            doc_metadata["type"] = "text"
+        if "section" not in doc_metadata:
+            doc_metadata["section"] = ""
+        if "heading" not in doc_metadata:
+            doc_metadata["heading"] = ""
+        doc_metadata["headers"] = headers
+        doc_metadata["extraction_method"] = doc_metadata.get("extraction_method", "fallback")
+        docs[i] = doc.copy(update={"page_content": preprocessed_text, "metadata": doc_metadata})
+
+    # Fix multiline URLs
+    for doc in docs:
+        doc.page_content = fix_multiline_urls(doc.page_content)
+
+    metadata = {"num_pages": total_pages}
+    return docs, metadata
 
 # Text Chunking
 
@@ -924,12 +965,14 @@ def chunk_documents(docs: list[Document]) -> list[Document]:
 
 # Vector Indexing
 
-FAISS_INDEX_PATH = "c:/Users/norbe/OneDrive/Documents/pdf-ai-system/server/lib/faiss_index"
+FAISS_INDEX_PATH = "server/lib/faiss_index"
 
 async def index_documents(docs):
     embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=os.getenv("OLLAMA_URL"))
     chunks = chunk_documents(docs)
-    if os.path.exists(FAISS_INDEX_PATH):
+    import pathlib
+    index_faiss_path = pathlib.Path(FAISS_INDEX_PATH) / "index.faiss"
+    if index_faiss_path.exists():
         vector_store = FAISS.load_local(FAISS_INDEX_PATH, embeddings, allow_dangerous_deserialization=True)
         vector_store.add_documents(chunks)
     else:
@@ -1074,6 +1117,20 @@ def get_qa_chain(vector_store: FAISS, llm):
     return qa_chain
 
 # Metadata filtering for access control
+
+def fix_multiline_urls(text: str) -> str:
+    """
+    Fix URLs that are split across multiple lines by removing newlines and spaces within URL patterns.
+    """
+    import re
+    # Find all http/https URLs, even if split
+    url_pattern = r'https?://[^\s\n]+(?:\n[^\s\n]*)*'
+    def fix_url(match):
+        url = match.group(0)
+        # Remove newlines and extra spaces
+        fixed = re.sub(r'\s+', '', url)
+        return fixed
+    return re.sub(url_pattern, fix_url, text, flags=re.IGNORECASE | re.MULTILINE)
 
 def filter_by_metadata(docs: List[Document], user_permissions: List[str]):
     return [doc for doc in docs if set(doc.metadata.get('permissions', [])) & set(user_permissions)]

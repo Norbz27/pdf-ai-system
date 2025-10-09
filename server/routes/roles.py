@@ -52,7 +52,7 @@ async def get_roles(request: Request):
 @router.post("/")
 async def create_role(
     role_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Create a new role
@@ -92,7 +92,7 @@ async def create_role(
 async def update_role(
     role_id: str,
     role_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Update an existing role
@@ -148,7 +148,7 @@ async def update_role(
 @router.delete("/{role_id}")
 async def delete_role(
     role_id: str,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Delete a role

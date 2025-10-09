@@ -26,16 +26,18 @@ import {
   MoreHorizontal,
 } from "lucide-react"
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import UserLayout from "@/app/user-layout"
 import AuthGuard from "@/app/components/AuthGuard"
 import { useUser } from "@/app/contexts/UserContext"
-import { listDocumentsWithFilters, chat } from "@/lib/api-client";
+import { listDocumentsWithFilters } from "@/lib/api-client";
 
 interface Message {
   id: string
   type: "user" | "ai"
   content: string
   timestamp: Date
+  isStreaming?: boolean
   sources?: Array<{
     document: string
     page: number
@@ -45,27 +47,11 @@ interface Message {
     name: string
     type: string
   }>
-}
-
-function TypingMessage({ content = "", onDone }: { content?: string; onDone?: () => void }) {
-  const [displayed, setDisplayed] = useState("");
-  useEffect(() => {
-    let i = 0;
-    const interval = setInterval(() => {
-      setDisplayed(content.slice(0, i + 1));
-      i++;
-      if (i >= content.length) {
-        clearInterval(interval);
-        if (onDone) onDone();
-      }
-    }, 12); // ~80 chars/sec
-    return () => clearInterval(interval);
-  }, [content, onDone]);
-  return (
-    <div className="prose prose-sm max-w-none">
-      <ReactMarkdown>{displayed}</ReactMarkdown>
-    </div>
-  );
+  metadata?: {
+    isFormsQuery?: boolean
+    linksFound?: string[]
+    category?: string
+  }
 }
 
 export default function ChatPage() {
@@ -76,6 +62,10 @@ export default function ChatPage() {
   const [selectedDocuments, setSelectedDocuments] = useState<string[]>([])
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const wsRef = useRef<WebSocket | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const maxReconnectAttempts = 10;
 
   const [aiOnline, setAiOnline] = useState(true)
   const [availableDocuments, setAvailableDocuments] = useState<any[]>([]);
@@ -89,7 +79,7 @@ export default function ChatPage() {
 
   const suggestedQuestions = [
     "What is the Oxytec Solutions Inc. COC?",
-    "Summarize the Q4 financial performance",
+    "Give me the link of the budget request form",
     "What products are available in the catalog?",
     "When is the next board meeting scheduled?",
   ]
@@ -131,7 +121,6 @@ export default function ChatPage() {
       setAvailableDocuments([]);
       return;
     }
-    // Fetch available documents from FastAPI backend filtered by user
     const fetchDocuments = async () => {
       try {
         const data = await listDocumentsWithFilters({ userId: user._id, userRole: user.role });
@@ -143,17 +132,144 @@ export default function ChatPage() {
     fetchDocuments();
   }, [user]);
 
-  const fetchAIResponse = async (prompt: string): Promise<string> => {
-    const data = await chat({
-      question: prompt,
-      docIds: selectedDocuments,
-      user,
-    });
-    return data.answer as string;
+  const connectWebSocket = useCallback(() => {
+    if (!user) return;
+
+    const token = localStorage.getItem('authToken'); // Adjust based on your auth implementation
+    if (!token) {
+      console.error('No auth token found for WebSocket connection');
+      setAiOnline(false);
+      return;
+    }
+
+    const wsUrl = `ws://localhost:8000/api/chat/ws?token=${token}`;
+    const ws = new WebSocket(wsUrl);
+
+    ws.onopen = () => {
+      console.log('WebSocket connected');
+      setAiOnline(true);
+      reconnectAttemptsRef.current = 0;
+    };
+
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      console.log('WebSocket message:', data);
+
+      switch (data.type) {
+        case 'connected':
+          console.log('Connection established');
+          break;
+
+        case 'metadata':
+          console.log('Query metadata:', data);
+          break;
+
+        case 'token':
+          // Update the last AI message with new token
+          setMessages((prev) => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.type === 'ai' && lastMessage.isStreaming) {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMessage,
+                  content: lastMessage.content + data.token,
+                },
+              ];
+            }
+            return prev;
+          });
+          break;
+
+        case 'complete':
+          setIsLoading(false);
+          // Update final message
+          setMessages((prev) => {
+            const lastMessage = prev[prev.length - 1];
+            if (lastMessage && lastMessage.type === 'ai') {
+              return [
+                ...prev.slice(0, -1),
+                {
+                  ...lastMessage,
+                  content: preprocessAIResponse(data.answer),
+                  isStreaming: false,
+                  metadata: {
+                    isFormsQuery: data.isFormsQuery,
+                    linksFound: data.linksFound,
+                    category: data.category,
+                  },
+                },
+              ];
+            }
+            return prev;
+          });
+          break;
+
+        case 'error':
+          console.error('WebSocket error:', data.message);
+          setIsLoading(false);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: Date.now().toString(),
+              type: 'ai',
+              content: `Error: ${data.message}`,
+              timestamp: new Date(),
+            },
+          ]);
+          break;
+      }
+    };
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setAiOnline(false);
+    };
+
+    ws.onclose = (event) => {
+      console.log('WebSocket disconnected', event);
+      setAiOnline(false);
+
+      if (reconnectAttemptsRef.current < maxReconnectAttempts) {
+        const timeout = Math.min(1000 * 2 ** reconnectAttemptsRef.current, 30000);
+        console.log(`Attempting to reconnect in ${timeout} ms`);
+        reconnectTimeoutRef.current = setTimeout(() => {
+          reconnectAttemptsRef.current += 1;
+          connectWebSocket();
+        }, timeout);
+      } else {
+        console.error('Max WebSocket reconnection attempts reached');
+      }
+    };
+
+    wsRef.current = ws;
+  }, [user]);
+
+  useEffect(() => {
+    connectWebSocket();
+
+    return () => {
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+      }
+    };
+  }, [connectWebSocket]);
+
+  const preprocessAIResponse = (response: string): string => {
+    const urlRegex = /https?:\/\/[^\s]*/g;
+    let processed = response.replace(urlRegex, (match) => match.replace(/\s/g, ''));
+    processed = processed.replace(urlRegex, (match) => `[${match}](${match})`);
+    return processed;
   }
 
   const handleSendMessage = async () => {
-    if (!inputMessage.trim()) return
+    if (!inputMessage.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      console.error('WebSocket not ready');
+      return;
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -170,34 +286,33 @@ export default function ChatPage() {
     }
 
     setMessages((prev) => [...prev, userMessage])
+    
+    // Add placeholder AI message for streaming
+    const aiMessageId = (Date.now() + 1).toString();
+    const aiMessage: Message = {
+      id: aiMessageId,
+      type: 'ai',
+      content: '',
+      timestamp: new Date(),
+      isStreaming: true,
+    };
+    setMessages((prev) => [...prev, aiMessage]);
+
     setInputMessage("")
     setIsLoading(true)
 
-    try {
-      const aiResponse = await fetchAIResponse(inputMessage)
+    // Send message via WebSocket
+    wsRef.current.send(JSON.stringify({
+      question: inputMessage,
+      docIds: selectedDocuments,
+      user: {
+        _id: user?._id,
+        name: user?.name,
+        email: user?.email,
+        role: user?.role,
+      },
+    }));
 
-      const aiMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: "ai",
-        content: aiResponse,
-        timestamp: new Date(),
-      }
-
-      setMessages((prev) => [...prev, aiMessage])
-    } catch (error) {
-      console.error("AI Error:", error)
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: (Date.now() + 1).toString(),
-          type: "ai",
-          content: "Sorry, I couldn't process your request at the moment. Please make sure Ollama is running. You can start it by running `docker-compose up -d` in your project directory.",
-          timestamp: new Date(),
-        },
-      ])
-    } finally {
-      setIsLoading(false)
-    }
     // Reset textarea height after sending
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
@@ -215,13 +330,11 @@ export default function ChatPage() {
     const value = e.target.value;
     setInputMessage(value);
     
-    // Auto-expand textarea
     if (textareaRef.current) {
       textareaRef.current.style.height = "auto";
       textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`;
     }
     
-    // Check for @ mention
     const atIndex = value.lastIndexOf('@');
     if (atIndex !== -1) {
       const query = value.slice(atIndex + 1);
@@ -241,7 +354,6 @@ export default function ChatPage() {
 
   const handleSelectDocument = (doc: any) => {
     setSelectedDocuments(prev => [...prev, doc._id]);
-    // Remove the @ part from input
     const atIndex = inputMessage.lastIndexOf('@');
     const newMessage = inputMessage.slice(0, atIndex);
     setInputMessage(newMessage);
@@ -254,40 +366,35 @@ export default function ChatPage() {
       .reverse()
       .find((msg) => msg.type === "user")
 
-    if (!userMessage) return
+    if (!userMessage || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return
 
     setIsLoading(true)
 
-    try {
-      const aiResponse = await fetchAIResponse(userMessage.content)
+    // Clear the AI message content for re-streaming
+    setMessages((prev) =>
+      prev.map((msg) =>
+        msg.id === aiMessageId
+          ? {
+              ...msg,
+              content: '',
+              isStreaming: true,
+              timestamp: new Date(),
+            }
+          : msg
+      )
+    )
 
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMessageId
-            ? {
-                ...msg,
-                content: aiResponse,
-                timestamp: new Date(),
-              }
-            : msg
-        )
-      )
-    } catch (error) {
-      console.error("Retry AI Error:", error)
-      setMessages((prev) =>
-        prev.map((msg) =>
-          msg.id === aiMessageId
-            ? {
-                ...msg,
-                content: "Retry failed. Please try again later.",
-                timestamp: new Date(),
-              }
-            : msg
-        )
-      )
-    } finally {
-      setIsLoading(false)
-    }
+    // Resend via WebSocket
+    wsRef.current.send(JSON.stringify({
+      question: userMessage.content,
+      docIds: selectedDocuments,
+      user: {
+        _id: user?._id,
+        name: user?.name,
+        email: user?.email,
+        role: user?.role,
+      },
+    }));
   }
 
   const handleSuggestedQuestion = (question: string) => {
@@ -318,7 +425,7 @@ export default function ChatPage() {
                 variant={aiOnline ? "default" : "destructive"}
                 className="text-xs"
               >
-                {aiOnline ? "Online" : "Offline"}
+                {aiOnline ? "● Online" : "○ Offline"}
               </Badge>
             </div>
           </div>
@@ -354,7 +461,6 @@ export default function ChatPage() {
                 {messages.length > 0 ? (
                   <div className="space-y-6 pt-6 px-6 pb-6">
                     {messages.map((message, idx) => {
-                      const isLatestAI = message.type === "ai" && message.id === latestAIMessageId && idx === messages.length - 1;
                       return (
                         <div key={message.id} className={`flex ${message.type === "user" ? "justify-end" : "justify-start"}`}>
                           <div className={`flex space-x-3 max-w-[75%] ${message.type === "user" ? "flex-row-reverse space-x-reverse" : ""}`}>
@@ -377,13 +483,31 @@ export default function ChatPage() {
                                   : "bg-white border border-gray-200 shadow-sm rounded-2xl rounded-bl-md"
                               }`}>
                                 <div className="text-sm leading-relaxed">
-                                  {isLatestAI ? (
-                                    <TypingMessage content={message.content} />
+                                  {message.isStreaming && !message.content ? (
+                                    <div className="flex items-center space-x-2">
+                                      <div className="flex space-x-1">
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.1s"}}></div>
+                                        <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.2s"}}></div>
+                                      </div>
+                                    </div>
                                   ) : (
                                     <div className="prose prose-sm max-w-none [&>*:last-child]:mb-0 [&>*:first-child]:mt-0 [&>p]:mb-2 [&>ul]:mb-2 [&>ol]:mb-2">
-                                      <ReactMarkdown>
+                                      <ReactMarkdown
+                                        remarkPlugins={[remarkGfm]}
+                                        components={{
+                                          a: ({ children, href }) => (
+                                            <a href={href} className="text-blue-600 underline break-all" target="_blank" rel="noopener noreferrer">
+                                              {children}
+                                            </a>
+                                          ),
+                                        }}
+                                      >
                                         {message.content}
                                       </ReactMarkdown>
+                                      {message.isStreaming && (
+                                        <span className="inline-block w-2 h-4 bg-gray-400 animate-pulse ml-1"></span>
+                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -400,34 +524,42 @@ export default function ChatPage() {
                                     ))}
                                   </div>
                                 )}
-                              </div>
 
-                              {message.sources && (
-                                <div className="bg-gray-50 rounded-xl p-3 text-xs border border-gray-100">
-                                  <p className="font-medium text-gray-700 mb-2">Sources:</p>
-                                  <div className="space-y-1">
-                                    {message.sources.map((source, index) => (
-                                      <div key={index} className="flex items-center justify-between text-gray-600">
-                                        <span className="truncate mr-2">
-                                          {source.document} (Page {source.page})
-                                        </span>
-                                        <Badge variant="outline" className="text-xs flex-shrink-0">
-                                          {Math.round(source.relevance * 100)}% match
-                                        </Badge>
-                                      </div>
-                                    ))}
+                                {message.metadata?.linksFound && message.metadata.linksFound.length > 0 && (
+                                  <div className="mt-3 pt-3 border-t border-gray-200">
+                                    <p className="text-xs text-gray-500 mb-2">Links found:</p>
+                                    <div className="space-y-1">
+                                      {message.metadata.linksFound.map((link, idx) => (
+                                        <a
+                                          key={idx}
+                                          href={link}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-xs text-blue-600 hover:underline block break-all"
+                                        >
+                                          {link}
+                                        </a>
+                                      ))}
+                                    </div>
                                   </div>
-                                </div>
-                              )}
+                                )}
+                              </div>
 
                               <div className={`flex items-center space-x-2 text-xs text-gray-500 px-1 opacity-0 group-hover:opacity-100 transition-opacity ${
                                 message.type === "user" ? "justify-end" : "justify-start"
                               }`}>
                                 <span>{message.timestamp.toLocaleTimeString()}</span>
                                 
-                                {message.type === "ai" && (
+                                {message.type === "ai" && !message.isStreaming && (
                                   <div className="flex items-center space-x-1">
-                                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0 hover:bg-gray-200 rounded-md">
+                                    <Button 
+                                      variant="ghost" 
+                                      size="sm" 
+                                      className="h-6 w-6 p-0 hover:bg-gray-200 rounded-md"
+                                      onClick={() => {
+                                        navigator.clipboard.writeText(message.content);
+                                      }}
+                                    >
                                       <Copy className="h-3 w-3" />
                                     </Button>
                                     
@@ -449,29 +581,6 @@ export default function ChatPage() {
                         </div>
                       );
                     })}
-
-                    {isLoading && (
-                      <div className="flex justify-start">
-                        <div className="flex space-x-3 max-w-[75%]">
-                          <Avatar className="h-8 w-8 flex-shrink-0">
-                            <AvatarFallback className="bg-gray-100">
-                              <Bot className="h-4 w-4 text-gray-600" />
-                            </AvatarFallback>
-                          </Avatar>
-                          
-                          <div className="bg-white border border-gray-200 shadow-sm rounded-2xl rounded-bl-md p-4">
-                            <div className="flex items-center space-x-3">
-                              <div className="flex space-x-1">
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.1s"}}></div>
-                                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: "0.2s"}}></div>
-                              </div>
-                              <span className="text-sm text-gray-600">AI is thinking...</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    )}
                     
                     <div ref={messagesEndRef} />
                   </div>
@@ -537,19 +646,15 @@ export default function ChatPage() {
                     onKeyDown={handleInputKeyDown}
                     className="flex-1 min-h-[24px] max-h-[200px] resize-none border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 p-2 rounded-lg"
                     rows={1}
+                    disabled={!aiOnline}
                   />
                   <Button 
                     onClick={handleSendMessage} 
-                    disabled={!inputMessage.trim() || isLoading}
+                    disabled={!inputMessage.trim() || isLoading || !aiOnline}
                     className="flex-shrink-0 w-10 h-10 p-0 rounded-xl bg-[#2C2C2C] hover:bg-gray-680 disabled:bg-gray-300"
                   >
                     <Send className="w-4 h-4" />
                   </Button>
-                </div>
-
-                {/* Help Text */}
-                <div className="flex items-center justify-center mt-3">
-                  
                 </div>
               </div>
             </div>

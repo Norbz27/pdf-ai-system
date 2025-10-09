@@ -43,6 +43,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Label } from "@/components/ui/label"
 import { useToast } from "@/hooks/use-toast"
+import { API_BASE_URL } from "@/lib/api";
 
 interface Document {
   _id: string
@@ -88,6 +89,8 @@ export default function DocumentsPage() {
   })
   const [viewingDoc, setViewingDoc] = useState<any | null>(null)
   const [docToDelete, setDocToDelete] = useState<Document | null>(null)
+  const [docToReprocess, setDocToReprocess] = useState<Document | null>(null)
+  const [isReprocessing, setIsReprocessing] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { toast } = useToast()
 
@@ -227,9 +230,12 @@ export default function DocumentsPage() {
     }
   }
 
-  const handleReprocessDocument = async (documentId: string) => {
+  const handleReprocessDocument = async () => {
+    if (!docToReprocess) return
+
+    setIsReprocessing(true)
     try {
-      const response = await fetch(`/api/admin/documents/${documentId}`, {
+      const response = await fetch(`/api/admin/documents/${docToReprocess._id}`, {
         method: 'PATCH',
         headers: {
           'Content-Type': 'application/json',
@@ -248,10 +254,11 @@ export default function DocumentsPage() {
 
       toast({
         title: "Success",
-        description: "Document reprocessing started",
+        description: "Document reprocessing completed",
       })
 
       fetchDocuments() // Refresh the list
+      setDocToReprocess(null)
     } catch (error) {
       console.error('Error reprocessing document:', error)
       toast({
@@ -259,6 +266,8 @@ export default function DocumentsPage() {
         description: error instanceof Error ? error.message : "Failed to reprocess document",
         variant: "destructive"
       })
+    } finally {
+      setIsReprocessing(false)
     }
   }
 
@@ -532,8 +541,8 @@ export default function DocumentsPage() {
                             <Eye className="h-4 w-4 mr-2" />
                             View
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
-                            onClick={() => handleReprocessDocument(doc._id)}
+                          <DropdownMenuItem
+                            onClick={() => setDocToReprocess(doc)}
                             disabled={doc.status === 'processing'}
                           >
                             <RefreshCw className="h-4 w-4 mr-2" />
@@ -584,7 +593,7 @@ export default function DocumentsPage() {
           {viewingDoc?.filePath ? (
             <div style={{ width: '100%', height: '70vh' }}>
               <iframe
-                src={`/pdfjs/web/viewer.html?file=/uploads/${encodeURIComponent(viewingDoc.name)}#view=page&sidebar=0`}
+                src={`${API_BASE_URL}/pdfjs/web/viewer.html?file=${encodeURIComponent(`${API_BASE_URL}/uploads/${viewingDoc.filePath}`)}#view=page&sidebar=0`}
                 title={viewingDoc.name}
                 width="100%"
                 height="100%"
@@ -624,6 +633,32 @@ export default function DocumentsPage() {
               }}
             >
               Delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Reprocess Confirmation Modal */}
+      <Dialog open={!!docToReprocess} onOpenChange={() => setDocToReprocess(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reprocess Document</DialogTitle>
+            <DialogDescription>
+              This will re-extract information from the document and update its content.
+              The document will be temporarily unavailable during processing.
+              <br />
+              <span className="font-bold">Document: {docToReprocess?.name}</span>
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDocToReprocess(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleReprocessDocument}
+              disabled={isReprocessing}
+            >
+              {isReprocessing ? "Reprocessing..." : "Reprocess"}
             </Button>
           </DialogFooter>
         </DialogContent>

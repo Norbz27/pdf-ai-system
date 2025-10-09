@@ -13,11 +13,19 @@ import { Progress } from "@/components/ui/progress"
 import { FileText, Upload, X, CheckCircle, AlertCircle, Settings, FolderOpen, Plus } from "lucide-react"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu"
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "@/components/ui/dialog"
 import Link from "next/link"
 import UserLayout from "@/app/user-layout"
 import AuthGuard from "@/app/components/AuthGuard"
 import { useUser } from "@/app/contexts/UserContext"
-import { getCategories, uploadDocument, getDocumentById } from "@/lib/api-client"
+import { getCategories, uploadDocument, getDocumentById, checkDocumentName } from "@/lib/api-client"
 
 interface UploadFile {
   id: string
@@ -36,6 +44,14 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(true)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const { user } = useUser()
+  const [renameModal, setRenameModal] = useState<{file: UploadFile, suggestedName: string, newName: string} | null>(null)
+
+  // Update newName in renameModal state when input changes
+  const handleRenameInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (renameModal) {
+      setRenameModal({ ...renameModal, newName: e.target.value });
+    }
+  };
 
   // Fetch categories from FastAPI
   useEffect(() => {
@@ -118,6 +134,25 @@ export default function UploadPage() {
     if (!user) {
       updateFile(file.id, { status: "error", error: "User not authenticated." });
       return;
+    }
+
+    // Check for duplicate document name
+    console.log("Checking document name:", file.file.name, user._id);
+    try {
+      const checkResponse = await checkDocumentName(file.file.name, user._id);
+      console.log("Check response:", checkResponse);
+      if (checkResponse.exists) {
+        // Show modal to confirm renaming
+        setRenameModal({
+          file,
+          suggestedName: checkResponse.suggestedName,
+          newName: checkResponse.suggestedName,
+        });
+        return;
+      }
+    } catch (err) {
+      console.error("Error checking document name:", err);
+      // Proceed with upload anyway
     }
 
     updateFile(file.id, { status: "uploading", progress: 0 });
@@ -475,6 +510,37 @@ export default function UploadPage() {
             </Card>
           </div>
         </div>
+
+        {/* Rename Modal */}
+        <Dialog open={!!renameModal} onOpenChange={() => setRenameModal(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Duplicate Document Name</DialogTitle>
+            <DialogDescription>
+              A document with the name "{renameModal?.file.file.name}" already exists. Please enter a new name or use the suggested one.
+            </DialogDescription>
+            <Input
+              type="text"
+              value={renameModal?.newName ?? renameModal?.suggestedName ?? ""}
+              onChange={handleRenameInputChange}
+              className="mt-2"
+            />
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameModal(null)}>Cancel</Button>
+            <Button onClick={() => {
+              if (renameModal) {
+                const newFileName = renameModal.newName?.trim() || renameModal.suggestedName;
+                const renamedFile = new File([renameModal.file.file], newFileName, { type: renameModal.file.file.type });
+                updateFile(renameModal.file.id, { file: renamedFile });
+                setRenameModal(null);
+                // Proceed with upload
+                handleFileUpload({ ...renameModal.file, file: renamedFile });
+              }
+            }}>Rename and Upload</Button>
+          </DialogFooter>
+        </DialogContent>
+        </Dialog>
       </UserLayout>
     </AuthGuard>
   )

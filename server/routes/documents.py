@@ -3,6 +3,7 @@ from server.services.document_pipeline import load_pdf, index_documents
 from server.lib.mongodb import get_database
 from server.lib.audit_logger import document_upload, system_error
 from server.models.document import DocumentModel, DocumentChunk, AccessGrant
+from langchain.schema import Document
 from bson import ObjectId
 import os
 from datetime import datetime
@@ -12,7 +13,10 @@ router = APIRouter()
 
 logger = logging.getLogger(__name__)
 
-UPLOAD_DIR = "c:/Users/norbe/OneDrive/Documents/pdf-ai-system/uploads/"
+UPLOAD_DIR = os.path.join(os.getcwd(), "uploads")
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+FAISS_INDEX_PATH = "server/lib/faiss_index"
 
 async def process_pdf(file_path, file_name, category_id, description, uploaded_by, ip_address, user_agent, document_id):
     logger.info(f"Starting processing for document {document_id}")
@@ -34,11 +38,44 @@ async def process_pdf(file_path, file_name, category_id, description, uploaded_b
         logger.info(f"Created {len(chunks)} chunks")
         size = f"{os.path.getsize(file_path) / 1024:.1f} KB"
         db = await get_database()
+        # Erase current chunks and update with new data
+        await db["documents"].update_one(
+            {"_id": ObjectId(document_id)},
+            {"$set": {"chunks": [], "status": "processing"}}
+        )
+
+        # Rebuild FAISS index excluding old chunks for this document
+        from langchain_community.vectorstores import FAISS
+        from langchain_ollama import OllamaEmbeddings
+        all_other_chunks = []
+        cursor = db["documents"].find({})
+        async for other_doc in cursor:
+            if str(other_doc["_id"]) != document_id:
+                for chunk in other_doc.get("chunks", []):
+                    metadata = chunk.copy()
+                    metadata["doc_id"] = str(other_doc["_id"])
+                    chunk_doc = Document(page_content=chunk["text"], metadata=metadata)
+                    all_other_chunks.append(chunk_doc)
+        embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=os.getenv("OLLAMA_URL"))
+        # Rebuild FAISS index
+        if all_other_chunks:
+            vector_store = FAISS.from_documents(all_other_chunks, embeddings)
+        else:
+            vector_store = None
+        # Add new chunks
+        from server.services.document_pipeline import chunk_documents
+        new_chunks = chunk_documents(docs)
+        if vector_store is None:
+            vector_store = FAISS.from_documents(new_chunks, embeddings)
+        else:
+            vector_store.add_documents(new_chunks)
+        vector_store.save_local(FAISS_INDEX_PATH)
+
         result = await db["documents"].update_one(
             {"_id": ObjectId(document_id)},
             {"$set": {
                 "size": size,
-                "pages": metadata["num_pages"],
+                "pages": metadata.get("num_pages", 1),
                 "chunks": chunks,
                 "status": "processed",
                 "updatedAt": datetime.utcnow().isoformat()
@@ -49,7 +86,7 @@ async def process_pdf(file_path, file_name, category_id, description, uploaded_b
             logger.error(f"Failed to update document {document_id}, no document matched")
         else:
             logger.info(f"Updated document {document_id} to processed")
-        document_upload(uploaded_by, "", file_name, size, metadata["num_pages"], ip_address)
+        document_upload(uploaded_by, "", file_name, size, metadata.get("num_pages", 1), ip_address)
     except Exception as e:
         logger.error(f"Error processing document {document_id}: {str(e)}")
         db = await get_database()
@@ -60,9 +97,53 @@ async def process_pdf(file_path, file_name, category_id, description, uploaded_b
         system_error(uploaded_by, "", f"Document upload failed: {file_name} - {str(e)}", ip_address)
         raise
 
+@router.get("/check-name")
+async def check_document_name(name: str, userId: str):
+    """
+    Check if a document name exists for the user and suggest a new name if it does.
+    """
+    logger.info(f"Checking document name: name={name}, userId={userId}")
+    try:
+        db = await get_database()
+
+        # Check if document with exact name exists for the user
+        existing = await db["documents"].find_one({"name": name, "uploadedBy": ObjectId(userId)})
+        if not existing:
+            return {"exists": False}
+
+        # Find all documents with similar names (base name + optional (number))
+        import re
+        base_match = re.match(r"^(.*?)(\s*\(\d+\))?\.pdf$", name, re.IGNORECASE)
+        if not base_match:
+            base_name = name.rsplit('.', 1)[0] if '.' in name else name
+            ext = name.rsplit('.', 1)[1] if '.' in name else ''
+        else:
+            base_name = base_match.group(1)
+            ext = "pdf"
+
+        # Find max version
+        pattern = f"^{re.escape(base_name)}\\s*\\(\\d+\\)\\.{re.escape(ext)}$"
+        similar_docs = await db["documents"].find({"name": {"$regex": pattern, "$options": "i"}, "uploadedBy": ObjectId(userId)}).to_list(length=None)
+        versions = [0]
+        for doc in similar_docs:
+            match = re.search(r"\((\d+)\)", doc["name"])
+            if match:
+                versions.append(int(match.group(1)))
+
+        max_version = max(versions)
+        suggested_name = f"{base_name} ({max_version + 1}).{ext}"
+
+        return {"exists": True, "suggestedName": suggested_name}
+
+    except Exception as e:
+        logger.error(f"Error checking document name: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Failed to check document name: {str(e)}")
+
+
 @router.get("/{document_id}")
 async def get_document(
     document_id: str,
+    request: Request,
     userId: str = Query(None, description="User ID for filtering access"),
     userRole: str = Query(None, description="User role for filtering access")
 ):
@@ -180,6 +261,10 @@ async def get_document(
 
         doc = documents[0]
 
+        # Construct absolute URL for filePath
+        if doc.get("filePath"):
+            doc["filePath"] = str(request.base_url).rstrip('/') + doc["filePath"]
+
         # Convert ObjectId to string for JSON serialization
         try:
             # Safely convert _id to string
@@ -211,6 +296,7 @@ async def get_document(
 
 @router.get("/")
 async def get_documents(
+    request: Request,
     userId: str = Query(None, description="User ID for filtering documents"),
     userRole: str = Query(None, description="User role for filtering documents")
 ):
@@ -329,6 +415,10 @@ async def get_documents(
         # Convert ObjectId to string for JSON serialization
         serialized_documents = []
         for doc in documents:
+            # Construct absolute URL for filePath
+            if doc.get("filePath"):
+                doc["filePath"] = str(request.base_url).rstrip('/') + doc["filePath"]
+
             try:
                 # Safely convert _id to string
                 if "_id" in doc and doc["_id"] is not None:
@@ -580,14 +670,80 @@ async def reprocess_document(
 @router.delete("/{document_id}")
 async def delete_document(document_id: str):
     """
-    Delete a document by ID.
+    Delete a document by ID and remove its embeddings from the FAISS index.
     """
     try:
+        from server.services.document_pipeline import index_documents, FAISS_INDEX_PATH
+        import pathlib
         db = await get_database()
+
+        # Find document to delete
+        doc = await db["documents"].find_one({"_id": ObjectId(document_id)})
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+
+        # Delete file if exists
+        file_path = doc.get("filePath")
+        if file_path:
+            abs_path = file_path if os.path.isabs(file_path) else os.path.join(os.getcwd(), file_path)
+            if os.path.exists(abs_path):
+                try:
+                    os.remove(abs_path)
+                except Exception as e:
+                    # Log but continue
+                    import logging
+                    logging.warning(f"Failed to delete file {abs_path}: {e}")
+
+        # Delete document from DB
         result = await db["documents"].delete_one({"_id": ObjectId(document_id)})
         if result.deleted_count == 0:
             raise HTTPException(status_code=404, detail="Document not found")
-        return {"message": "Document deleted successfully"}
+
+        # Rebuild FAISS index excluding deleted document
+        remaining_docs_cursor = db["documents"].find({})
+        remaining_docs = await remaining_docs_cursor.to_list(length=None)
+
+        # Collect all chunks from remaining documents
+        all_chunks = []
+        for doc in remaining_docs:
+            chunks = doc.get("chunks", [])
+            for chunk in chunks:
+                from langchain.schema import Document
+                metadata = chunk.copy()
+                metadata["doc_id"] = str(doc["_id"])
+                chunk_doc = Document(page_content=chunk["text"], metadata=metadata)
+                all_chunks.append(chunk_doc)
+
+        embeddings = None
+        # Load embeddings
+        from langchain_ollama import OllamaEmbeddings
+        embeddings = OllamaEmbeddings(model="nomic-embed-text", base_url=os.getenv("OLLAMA_URL"))
+
+        index_path = pathlib.Path(FAISS_INDEX_PATH)
+        index_file = index_path / "index.faiss"
+
+        if all_chunks:
+            from langchain_community.vectorstores import FAISS
+            vector_store = FAISS.from_documents(all_chunks, embeddings)
+            vector_store.save_local(FAISS_INDEX_PATH)
+        else:
+            # No documents left, remove index files if exist
+            if index_file.exists():
+                try:
+                    index_file.unlink()
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Failed to delete FAISS index file {index_file}: {e}")
+            # Also remove index metadata file if exists
+            index_metadata = index_path / "index.pkl"
+            if index_metadata.exists():
+                try:
+                    index_metadata.unlink()
+                except Exception as e:
+                    import logging
+                    logging.warning(f"Failed to delete FAISS index metadata file {index_metadata}: {e}")
+
+        return {"message": "Document and its embeddings deleted successfully"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -648,8 +804,9 @@ async def upload_document(
         raise HTTPException(status_code=400, detail="Invalid user")
 
     file_path = os.path.join(UPLOAD_DIR, file.filename)
+    file_path = file_path.replace("\\", "/")
+    content = await file.read()
     with open(file_path, "wb") as f:
-        content = await file.read()
         f.write(content)
 
     # Insert document with initial status "processing"
@@ -657,8 +814,8 @@ async def upload_document(
         name=file.filename,
         categoryId=ObjectId(categoryId),
         description=description,
-        size="",  # Will be updated
-        filePath=file_path,
+        size="",  # Will be updated by process_pdf
+        filePath=f"/uploads/{file.filename}",  # Store URL path
         pages=0,  # Will be updated
         chunks=[],  # Will be updated
         uploadedBy=ObjectId(uploadedBy),

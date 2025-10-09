@@ -87,7 +87,7 @@ async def get_users(request: Request):
 @router.post("/")
 async def create_user(
     user_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Create a new user
@@ -135,7 +135,7 @@ async def create_user(
 async def update_user(
     user_id: str,
     user_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Update an existing user
@@ -202,7 +202,7 @@ async def update_user(
 async def patch_user(
     user_id: str,
     user_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Partially update an existing user (for status updates)
@@ -252,7 +252,7 @@ async def patch_user(
 async def reset_user_password(
     user_id: str,
     password_data: dict,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Reset user password
@@ -297,7 +297,7 @@ async def reset_user_password(
 @router.post("/{user_id:[a-fA-F0-9]{24}}/resend-verification")
 async def resend_verification(
     user_id: str,
-    user=Depends(require_permission("admin"))
+  user=Depends(require_permission("admin_access"))
 ):
     """
     Resend verification email to user
@@ -328,7 +328,7 @@ async def resend_verification(
 @router.get("/{user_id:[a-fA-F0-9]{24}}/qr-code")
 async def get_user_qr_code(
     user_id: str,
-    user=Depends(require_permission("admin"))
+   user=Depends(require_permission("admin_access"))
 ):
     """
     Get 2FA QR code for user
@@ -371,7 +371,7 @@ async def get_user_qr_code(
 @router.delete("/{user_id:[a-fA-F0-9]{24}}")
 async def delete_user(
     user_id: str,
-    user=Depends(require_permission("admin"))
+    user=Depends(require_permission("admin_access"))
 ):
     """
     Delete a user
